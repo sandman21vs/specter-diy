@@ -1,41 +1,67 @@
 #!/usr/bin/env bash
-# Compila e grava o firmware MicroPython + p4board na Waveshare 4.3-C.
+# Compila e grava o firmware Specter na Waveshare 4.3-C.
 #
-#   ./build-baseline.sh build
-#   PORT=/dev/ttyACM0 ./build-baseline.sh flash
+#   ports/esp32p4/tools/build.sh [build]          compila
+#   ports/esp32p4/tools/build.sh flash  [PORTA]   grava bootloader, particoes e app
+#   ports/esp32p4/tools/build.sh erase  [PORTA]   apaga a flash inteira
+#   ports/esp32p4/tools/build.sh clean            apaga o diretorio de build
 #
-# Na primeira vez rode tambem:
-#   make -C "$MICROPYTHON_DIR/mpy-cross" -j"$(nproc)"
-#   make -C "$MICROPYTHON_DIR/ports/esp32" BOARD=ESP32_GENERIC_P4 submodules
+# Sem PORTA, usa $PORT ou tenta detectar a ponte serial da placa.
+# Rode tools/setup.sh uma vez antes.
 
 set -euo pipefail
 . "$(dirname -- "$0")/env.sh" > /dev/null
 
 BUILD_DIR="$MICROPYTHON_DIR/ports/esp32/build-W43"
-PY="$IDF_TOOLS_PATH/python_env/idf5.5_py3.14_env/bin/python"
+
+detect_port() {
+  local p
+  for p in ${PORT:-} /dev/ttyACM* /dev/ttyUSB* /dev/cu.usbmodem* /dev/cu.wchusbserial*; do
+    [ -e "$p" ] && { echo "$p"; return; }
+  done
+  echo "no serial port found: plug the board's UART port, or pass the port as an argument" >&2
+  exit 1
+}
+
+esptool() {
+  python -m esptool --chip esp32p4 -p "$PORT" -b 460800 \
+    --before default_reset --after hard_reset "$@"
+}
 
 case "${1:-build}" in
   build)
+    # Metadados do git exibidos pelo app; opcional, o app cai em "unknown".
+    (cd "$SPECTER_DIR" && python tools/embed_git_info.py src/git_info.py > /dev/null 2>&1) || true
     cd "$MICROPYTHON_DIR/ports/esp32"
     idf.py -D MICROPY_BOARD="$MP_BOARD" \
            -D MICROPY_BOARD_DIR="$MP_BOARD_DIR" \
            -D USER_C_MODULES="$MP_USER_C_MODULES" \
            -D EXTRA_COMPONENT_DIRS="$MP_EXTRA_COMPONENTS" \
            -B build-W43 build
+    echo
+    echo "Firmware: $BUILD_DIR"
     ;;
   flash)
     # idf.py flash falha aqui: o wrapper procura components/esptool_py/esptool.py,
     # que nao existe mais nesta versao (esptool virou pacote pip). Chamamos o
     # modulo direto, com os offsets do proprio flash_args do build.
+    PORT="${2:-$(detect_port)}"
+    echo "Flashing via $PORT"
     cd "$BUILD_DIR"
-    "$PY" -m esptool --chip esp32p4 -p "${PORT:?defina PORT=/dev/ttyACM0}" \
-      -b 460800 --before default_reset --after hard_reset \
-      write_flash --flash_mode dio --flash_freq 40m --flash_size 16MB \
+    esptool write_flash --flash_mode dio --flash_freq 40m --flash_size 16MB \
       0x2000   bootloader/bootloader.bin \
       0x8000   partition_table/partition-table.bin \
       0x10000  micropython.bin
     ;;
+  erase)
+    PORT="${2:-$(detect_port)}"
+    echo "Erasing flash via $PORT"
+    esptool erase_flash
+    ;;
+  clean)
+    rm -rf "$BUILD_DIR"
+    ;;
   *)
-    echo "uso: $0 {build|flash}" >&2; exit 2
+    echo "usage: $0 {build|flash|erase|clean} [PORT]" >&2; exit 2
     ;;
 esac

@@ -7,7 +7,13 @@
 # Modulos padrao da porta esp32 (bootloader do sistema de arquivos, etc).
 include("$(PORT_DIR)/boards/manifest.py")
 
-_ROOT = "/home/sm/specter-diy"
+# Raiz do specter-diy, relativa a este board: ports/esp32p4/boards/<board>/.
+# O makemanifest roda este arquivo com o diretorio dele como cwd. Precisa ser
+# caminho absoluto de verdade: freeze(path, "dir") testa isdir antes de expandir
+# $(BOARD_DIR), e com a variavel crua "dir" seria tratado como arquivo.
+import os
+
+_ROOT = os.path.abspath("../../../..")
 
 # Shims da plataforma: pyb, sdram e o wrapper display.
 freeze(_ROOT + "/ports/esp32p4/lib")

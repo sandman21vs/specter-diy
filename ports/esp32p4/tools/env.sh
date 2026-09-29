@@ -1,39 +1,61 @@
-# Ambiente de build do baseline MicroPython para ESP32-P4.
+# Ambiente de build do firmware ESP32-P4.
 #
 #   . ports/esp32p4/tools/env.sh
 #
-# Reaproveita o ESP-IDF e o toolchain ja instalados para o bootloader, sem
-# tocar em ~/esp nem ~/.espressif usados por outros projetos.
+# Todos os caminhos derivam da posicao deste arquivo. As dependencias externas
+# (MicroPython, ESP-IDF e toolchain) ficam em ports/esp32p4/deps/, criado pelo
+# tools/setup.sh e ignorado pelo git. Qualquer variavel abaixo pode ser
+# sobrescrita no ambiente para reaproveitar uma arvore ja existente.
 
-export IDF_TOOLS_PATH=/home/sm/.espressif-specter-p4
-export MICROPYTHON_DIR=/home/sm/micropython-p4
-export SPECTER_BOOTLOADER_DIR=/home/sm/specter-bootloader
+if [ -n "${BASH_SOURCE:-}" ]; then
+  _p4_env="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  _p4_env="${(%):-%x}"
+else
+  echo "env.sh: source this from bash or zsh" >&2
+  return 1
+fi
+P4_DIR="$(cd "$(dirname -- "$_p4_env")/.." && pwd)"
+unset _p4_env
+export P4_DIR
+export SPECTER_DIR="$(cd "$P4_DIR/../.." && pwd)"
+export P4_DEPS="${P4_DEPS:-$P4_DIR/deps}"
+
+# MicroPython master: o board ESP32_GENERIC_P4 ainda nao saiu em release.
+export MICROPYTHON_DIR="${MICROPYTHON_DIR:-$P4_DEPS/micropython}"
 
 # ESP-IDF v5.5.5, pinado como submodulo do specter-bootloader.
 # Nao esta na lista oficialmente suportada pelo MicroPython (5.3-5.5.4), mas
-# compila o alvo esp32p4 sem erro -- verificado nesta arvore.
-. "$SPECTER_BOOTLOADER_DIR/third_party/esp-idf/export.sh" > /dev/null 2>&1
+# compila o alvo esp32p4 sem erro.
+export SPECTER_BOOTLOADER_DIR="${SPECTER_BOOTLOADER_DIR:-$P4_DEPS/specter-bootloader}"
+export IDF_PATH="$SPECTER_BOOTLOADER_DIR/third_party/esp-idf"
+export IDF_PATH_FORCE=1
+export IDF_TOOLS_PATH="${IDF_TOOLS_PATH:-$P4_DEPS/espressif}"
 
-# A placa e ESP32-P4 revisao v1.3 (chip_revision 103 = major 1, minor 3).
-# O board.md do MicroPython exige a variante PRE_REV3 para revisoes 0.x e 1.x;
-# o build padrao mira revisao 3.0+ e nao sobe neste silicio.
+# A placa e ESP32-P4 revisao v1.3; o board embute sdkconfig.p4_pre_rev3.
 export MP_BOARD=WAVESHARE_P4_43
-export MP_BOARD_DIR=/home/sm/specter-diy/ports/esp32p4/boards/WAVESHARE_P4_43
-export MP_USER_C_MODULES=/home/sm/specter-diy/ports/esp32p4/components/micropython.cmake
+export MP_BOARD_DIR="$P4_DIR/boards/WAVESHARE_P4_43"
+export MP_USER_C_MODULES="$P4_DIR/components/micropython.cmake"
 
 # Componentes ESP-IDF de verdade. Necessarios para dependencias gerenciadas: o
 # MicroPython so le idf_component.yml de ports/esp32/main/, e um usermod nao
 # pode declarar as suas.
-export MP_EXTRA_COMPONENTS=/home/sm/specter-diy/ports/esp32p4/idf_components
-
-# O board ja embute sdkconfig.p4_pre_rev3, entao nao ha variante a passar.
-# ESP32P4_REV_MIN_0 cobre o silicio v1.3 desta placa e tambem o 3.x.
+export MP_EXTRA_COMPONENTS="$P4_DIR/idf_components"
 
 # Sem variante de WiFi de proposito: a placa tem um ESP32-C6, mas o alvo e um
-# dispositivo airgapped. O radio fica de fora do build e, mais adiante, sera
-# mantido em reset por hardware via GPIO 54.
+# dispositivo airgapped.
 
-echo "ESP32-P4 baseline:"
+if [ ! -f "$IDF_PATH/export.sh" ]; then
+  echo "ESP-IDF not found at $IDF_PATH -- run ports/esp32p4/tools/setup.sh first" >&2
+  return 1
+fi
+. "$IDF_PATH/export.sh" > /dev/null 2>&1 || {
+  echo "could not activate ESP-IDF; run: . \"$IDF_PATH/export.sh\" to see why" >&2
+  return 1
+}
+
+echo "ESP32-P4:"
 echo "  IDF            = $(idf.py --version 2>&1 | tail -1)"
 echo "  IDF_TOOLS_PATH = $IDF_TOOLS_PATH"
+echo "  MICROPYTHON    = $MICROPYTHON_DIR"
 echo "  BOARD          = $MP_BOARD"

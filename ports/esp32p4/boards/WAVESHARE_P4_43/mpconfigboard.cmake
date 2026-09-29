@@ -11,11 +11,18 @@
 
 set(IDF_TARGET esp32p4)
 
+# O sdkconfig nao aceita caminho relativo ao board, entao o da tabela de
+# particoes e gerado aqui, absoluto, como mais um fragmento de defaults.
+set(_P4_PARTITIONS_SDKCONFIG ${CMAKE_BINARY_DIR}/sdkconfig.partitions)
+file(WRITE ${_P4_PARTITIONS_SDKCONFIG}
+    "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"${CMAKE_CURRENT_LIST_DIR}/partitions.csv\"\n")
+
 set(SDKCONFIG_DEFAULTS
     boards/sdkconfig.base
     boards/sdkconfig.p4
     boards/sdkconfig.p4_pre_rev3
     ${CMAKE_CURRENT_LIST_DIR}/sdkconfig.board
+    ${_P4_PARTITIONS_SDKCONFIG}
 )
 
 set(MICROPY_FROZEN_MANIFEST ${CMAKE_CURRENT_LIST_DIR}/manifest.py)

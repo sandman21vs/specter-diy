@@ -5,6 +5,8 @@ touch GT911, câmera OV5647, 32 MB PSRAM, 16 MB de flash usada de 32 MB físicos
 
 Trabalho em andamento. Nada aqui é firmware utilizável ainda.
 
+**Para compilar e gravar, siga o [README da raiz](../../README.md#build-and-flash).**
+
 ## Perfil de segurança
 
 Enquanto durar o desenvolvimento: **Secure Boot desativado, flash encryption
@@ -122,8 +124,8 @@ precisam das variantes `PRE_REV3`. O build padrão define
 
 **ESP-IDF 5.5.5 funciona**, apesar de não constar na lista oficial do
 MicroPython (5.3, 5.4, 5.4.1, 5.4.2, 5.5.1, 5.5.2, 5.5.4). Isso permite
-reaproveitar o checkout já pinado pelo bootloader e o toolchain em
-`/home/sm/.espressif-specter-p4`, sem uma segunda árvore de 2,6 GB.
+reaproveitar o checkout já pinado pelo bootloader, sem uma segunda árvore de
+ESP-IDF. O `tools/setup.sh` instala o toolchain em `deps/espressif`.
 
 **Nenhuma variante de WiFi.** A placa tem um ESP32-C6, mas o alvo é airgapped.
 O rádio fica fora do build e, adiante, será mantido em reset por hardware pelo
@@ -132,16 +134,15 @@ GPIO 54, como o Kern faz.
 ### Reproduzir
 
 ```sh
-. ports/esp32p4/tools/env.sh
-make -C "$MICROPYTHON_DIR/mpy-cross" -j"$(nproc)"
-make -C "$MICROPYTHON_DIR/ports/esp32" BOARD=$MP_BOARD BOARD_VARIANT=$MP_VARIANT submodules
-ports/esp32p4/tools/build-baseline.sh build
-PORT=/dev/ttyACM0 ports/esp32p4/tools/build-baseline.sh flash
+ports/esp32p4/tools/setup.sh      # uma vez: MicroPython, ESP-IDF e toolchain em deps/
+ports/esp32p4/tools/build.sh
+ports/esp32p4/tools/build.sh erase
+ports/esp32p4/tools/build.sh flash
 ```
 
 `idf.py flash` **não** funciona nesta combinação: o wrapper procura
 `components/esptool_py/esptool.py`, que não existe mais (o esptool virou pacote
-pip, v4.12.0). O `build-baseline.sh flash` chama o módulo direto.
+pip, v4.12.0). O `tools/build.sh flash` chama o módulo direto.
 
 ## Fase 2 — display e touch sob MicroPython
 
@@ -190,9 +191,8 @@ Evidência completa em `reports/touch-reset-gpio-divergence.md`.
 ### Compilar e gravar
 
 ```sh
-. ports/esp32p4/tools/env.sh
-ports/esp32p4/tools/build.sh build
-PORT=/dev/ttyACM0 ports/esp32p4/tools/build.sh flash
+ports/esp32p4/tools/build.sh
+ports/esp32p4/tools/build.sh flash
 ```
 
 ### Duas armadilhas do build

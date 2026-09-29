@@ -1,4 +1,177 @@
-# Specter-DIY
+# Specter-DIY for ESP32-P4
+
+This is a fork of [cryptoadvance/specter-diy](https://github.com/cryptoadvance/specter-diy)
+that runs the Specter firmware on the **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C**:
+a single off-the-shelf board with a 4.3" touchscreen, a camera for QR codes and a
+microSD slot. No soldering, no extra parts.
+
+> [!WARNING]
+> **Work in progress. Do not use with real funds.** The firmware is built in a
+> development profile: no Secure Boot, no flash encryption, no eFuses burned.
+> Everything is reversible, but the device is not protected against someone
+> with physical access to it.
+
+## What works
+
+Every item below was tested on the board.
+
+| Feature | Status |
+|---|---|
+| 480x800 MIPI-DSI display and GT911 touch | working |
+| Specter GUI (LVGL 9.3) | working |
+| secp256k1 (ECDSA, Schnorr/BIP340 test vectors) | working |
+| Bitcoin stack (`embit`, official BIP84 test vectors) | working |
+| OV5647 camera over MIPI-CSI, QR scanning | working, ~11 scans/s |
+| microSD (FAT) | working |
+| Hardware random number generator | working |
+| ESP32-C6 radio | held in reset (airgapped by design) |
+| Secure boot / flash encryption / secure wipe | **not implemented** |
+
+## What you need
+
+- [Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm)
+- A USB-C data cable, plugged into the port labelled **UART** (not USB-OTG)
+- A computer running **macOS** or **Linux**, with ~6 GB of free disk space
+
+## Build and flash
+
+Copy and paste each block into your terminal. The first run downloads the
+ESP-IDF toolchain and MicroPython, which takes a while; later builds are fast.
+
+### 1. Install the system packages
+
+**macOS** (with [Homebrew](https://brew.sh)):
+
+```bash
+xcode-select --install; brew install git cmake ninja python
+```
+
+**Debian / Ubuntu:**
+
+```bash
+sudo apt update && sudo apt install -y git cmake ninja-build python3 python3-venv python3-pip build-essential libusb-1.0-0 wget flex bison gperf ccache libffi-dev libssl-dev dfu-util
+```
+
+On Linux, also allow your user to access the serial port, then log out and back in:
+
+```bash
+sudo usermod -aG dialout $USER
+```
+
+### 2. Get the code
+
+```bash
+git clone -b esp32-p4-port https://github.com/sandman21vs/specter-diy.git
+cd specter-diy
+```
+
+### 3. Download the dependencies (once)
+
+```bash
+ports/esp32p4/tools/setup.sh
+```
+
+This fetches everything into `ports/esp32p4/deps/`, without touching any other
+ESP-IDF install you may have:
+
+- [MicroPython](https://github.com/micropython/micropython) at the verified
+  `master` commit (the ESP32-P4 board is not in a release yet)
+- ESP-IDF v5.5.5, pinned by [sandman21vs/specter-bootloader](https://github.com/sandman21vs/specter-bootloader/tree/port_esp32-p4)
+- the RISC-V toolchain and the ESP-IDF Python environment
+
+### 4. Build
+
+```bash
+ports/esp32p4/tools/build.sh
+```
+
+It ends with the firmware size and the line `Firmware: .../build-W43`.
+
+### 5. Flash
+
+Plug the board into the **UART** port. The first time, erase the whole flash
+(this also clears the factory demo):
+
+```bash
+ports/esp32p4/tools/build.sh erase
+```
+
+Then write the firmware:
+
+```bash
+ports/esp32p4/tools/build.sh flash
+```
+
+The script finds the serial port by itself. If you have more than one device
+connected, pass the port explicitly, for example
+`ports/esp32p4/tools/build.sh flash /dev/cu.usbmodem1101` on macOS or
+`ports/esp32p4/tools/build.sh flash /dev/ttyACM0` on Linux.
+
+The board resets and the Specter interface appears on the screen.
+
+### Updating
+
+```bash
+git pull && git submodule update --init
+ports/esp32p4/tools/build.sh && ports/esp32p4/tools/build.sh flash
+```
+
+Only erase again if the partition table changed. If a build fails after an
+update with odd `MP_QSTR_` errors, run `ports/esp32p4/tools/build.sh clean` and
+build again.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `No serial data received` / port busy while flashing | Close any serial monitor, then hold **BOOT**, tap **RST**, release **BOOT** and flash again |
+| No serial port shows up | Use the **UART** USB-C port and a data cable (not a charge-only one) |
+| `filesystem appears to be corrupted` on the console | Run `build.sh erase`, then `build.sh flash` |
+| `setup.sh` stops during the ESP-IDF install | Run it again; it resumes where it stopped |
+
+### Serial console (optional)
+
+For the MicroPython REPL and the on-board hardware tests:
+
+```bash
+pip3 install mpremote
+mpremote
+```
+
+The hardware tests live in [`ports/esp32p4/`](./ports/esp32p4) (`test_*.py`).
+
+## How the port works
+
+- Firmware: MicroPython `master` + ESP-IDF v5.5.5, with the Specter app and its
+  libraries frozen into the binary.
+- C modules in [`ports/esp32p4/components/`](./ports/esp32p4/components):
+  display and touch, camera, LVGL 9.3 binding, secp256k1, SHA-512/RIPEMD-160.
+- A small `pyb` shim maps the STM32 API the Specter app expects onto the ESP32.
+  The camera shows up as a virtual QR scanner, so the app's QR protocol code
+  (animated QR, UR, BBQr) runs unchanged.
+
+Design notes, pin maps and every problem found along the way are in
+[`ports/esp32p4/README.md`](./ports/esp32p4/README.md) (Portuguese) and in
+[`reports/`](./reports).
+
+## Credits
+
+- [cryptoadvance/specter-diy](https://github.com/cryptoadvance/specter-diy):
+  the Specter wallet itself
+- [sandman21vs/specter-bootloader](https://github.com/sandman21vs/specter-bootloader/tree/port_esp32-p4)
+  (from [miketlk/specter-bootloader](https://github.com/miketlk/specter-bootloader)):
+  ESP32-P4 pin map, panel timings, pinned ESP-IDF
+- [sandman21vs/secp256k1-embedded](https://github.com/sandman21vs/secp256k1-embedded/tree/micropython-master-api):
+  secp256k1 bindings updated for current MicroPython
+- [odudex/Kern](https://github.com/odudex/Kern) and
+  [odudex/k_quirc](https://github.com/odudex/k_quirc): Waveshare 4.3 BSP, camera
+  pipeline and QR decoder
+- [diybitcoinhardware/f469-disco](https://github.com/diybitcoinhardware/f469-disco):
+  LVGL, `embit` and the other shared libraries
+
+---
+
+# Original Specter-DIY
 
     "Cypherpunks write code. We know that someone has to write software to defend privacy, 
     and since we can't get privacy unless we all do, we're going to write it."
