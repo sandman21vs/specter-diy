@@ -48,6 +48,9 @@ class Modal(lv.obj):
         self.label.set_style_text_color(lv.color_hex(0xFFFFFF), 0)
 
     def set_text(self, text):
+        # Newly created objects have not resolved their requested size yet.
+        # Resolve the backdrop before using its bounds to constrain the dialog.
+        self.update_layout()
         parent_width = self.get_width()
         parent_height = self.get_height()
         dialog_width = min(self.DIALOG_WIDTH, parent_width - 2 * self.DIALOG_MARGIN)
