@@ -15,6 +15,7 @@
 
 #include "board_config.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "lv_conf.h"
 #include "lvgl.h"
 #include "p4board.h"
@@ -59,18 +60,27 @@ static void tft_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map
             ESP_LOGE(TAG, "FULL render produced an invalid flush area");
             invalid_area_reported = true;
         }
-        lv_display_flush_ready(disp);
+        /* Unknown buffer ownership must never be handed back to LVGL. */
+        esp_restart();
         return;
     }
 
     /* The IDF DPI driver accepts panel framebuffer pointers and synchronizes
      * the complete dirty area out of cache. The BSP queues the frame at a
-     * completed-frame boundary, then waits until the old scanout buffer is
-     * released before LVGL may use it for the next render. */
+     * fresh frame-completion events, covering an ISR already in flight, before
+     * LVGL may use the previous scanout buffer for the next render. */
     esp_err_t result = p4board_present_framebuffer((const uint16_t *)px_map);
-    if (result != ESP_OK && !flush_error_reported) {
-        ESP_LOGE(TAG, "framebuffer presentation failed: %s", esp_err_to_name(result));
-        flush_error_reported = true;
+    if (result != ESP_OK) {
+        if (!flush_error_reported) {
+            ESP_LOGE(TAG, "framebuffer presentation failed: %s; restarting safely",
+                esp_err_to_name(result));
+            flush_error_reported = true;
+        }
+        /* A failed handoff does not prove either scanout buffer is writable.
+         * Restart instead of rotating buffers or hanging in LVGL's wait loop.
+         * This only resets the CPU; persistent storage is not erased. */
+        esp_restart();
+        return;
     }
     lv_display_flush_ready(disp);
 }

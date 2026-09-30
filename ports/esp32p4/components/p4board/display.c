@@ -128,6 +128,7 @@ static uint16_t *lcd_framebuffers[2];
 static uint16_t *drawing_framebuffer;
 static SemaphoreHandle_t frame_complete_semaphore;
 static uint8_t displayed_framebuffer;
+static bool lvgl_owns_framebuffers;
 static bool display_timeout_reported;
 static bool backlight_timer_initialized;
 static bool backlight_channel_initialized;
@@ -328,6 +329,7 @@ esp_err_t p4board_display_init(void) {
     lcd_framebuffers[0] = framebuffer0;
     lcd_framebuffers[1] = framebuffer1;
     displayed_framebuffer = 0;
+    lvgl_owns_framebuffers = false;
 
     ESP_LOGI(TAG, "ST7701 %ux%u active: DSI=%u lanes at %u Mbps, LDO=%d/%d mV",
         P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT, P4BOARD_LCD_DSI_LANES,
@@ -365,6 +367,7 @@ void p4board_display_deinit(void) {
     lcd_framebuffers[0] = NULL;
     lcd_framebuffers[1] = NULL;
     displayed_framebuffer = 0;
+    lvgl_owns_framebuffers = false;
     if (drawing_framebuffer) {
         heap_caps_free(drawing_framebuffer);
         drawing_framebuffer = NULL;
@@ -413,6 +416,9 @@ esp_err_t p4board_framebuffers(uint16_t **fb0, uint16_t **fb1) {
     }
     *fb0 = lcd_framebuffers[0];
     *fb1 = lcd_framebuffers[1];
+    /* LVGL owns both buffers until display deinit. Legacy flush must not
+     * change its scanout selection or overwrite its next render target. */
+    lvgl_owns_framebuffers = true;
     return ESP_OK;
 }
 
@@ -430,22 +436,23 @@ esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Consume a completed-frame boundary. The IDF restarts the current
-     * framebuffer before waking us; we can then queue the finished alternate
-     * framebuffer without racing the ISR's selection of the current one. */
-    esp_err_t result = wait_for_display_event(frame_complete_semaphore,
-        "frame boundary");
-    if (result != ESP_OK) {
-        return result;
-    }
-
-    result = esp_lcd_panel_draw_bitmap(dpi_panel, 0, 0,
+    esp_err_t result = esp_lcd_panel_draw_bitmap(dpi_panel, 0, 0,
         P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT, framebuffer);
     if (result != ESP_OK) {
         return result;
     }
-    result = wait_for_display_event(frame_complete_semaphore,
-        "frame-buffer completion");
+    /* Discard events that predate the queued frame. The IDF ISR snapshots
+     * cur_fb_index before restarting DMA, then gives our semaphore. An ISR
+     * already in flight may still report the old selection after draw_bitmap
+     * returns. Two NEW completions cover that race: by the second boundary
+     * the queued frame is selected and the previous scanout buffer is free. */
+    while (xSemaphoreTake(frame_complete_semaphore, 0) == pdTRUE) {
+    }
+    result = wait_for_display_event(frame_complete_semaphore, "frame selection");
+    if (result == ESP_OK) {
+        result = wait_for_display_event(frame_complete_semaphore,
+            "frame-buffer completion");
+    }
     if (result == ESP_OK) {
         displayed_framebuffer = framebuffer_index;
     }
@@ -461,6 +468,9 @@ esp_err_t p4board_display_enabled(bool enabled) {
 }
 
 esp_err_t p4board_flush(uint16_t y, uint16_t height) {
+    if (lvgl_owns_framebuffers) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!dpi_panel || !drawing_framebuffer || !lcd_framebuffers[0] || !lcd_framebuffers[1]) {
         return ESP_ERR_INVALID_STATE;
     }

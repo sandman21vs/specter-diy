@@ -6,6 +6,7 @@ class Modal(lv.obj):
 
     DIALOG_WIDTH = 400
     DIALOG_MARGIN = 24
+    DIALOG_MIN_HEIGHT = 160
 
     def __init__(self, parent, *args, **kwargs):
         # Create a base object for the modal background
@@ -62,7 +63,8 @@ class Modal(lv.obj):
 
         content_height = self.label.get_height()
         max_dialog_height = max(1, parent_height - 2 * self.DIALOG_MARGIN)
-        dialog_height = min(content_height + 40, max_dialog_height)
+        dialog_height = min(max(content_height + 40, self.DIALOG_MIN_HEIGHT),
+                            max_dialog_height)
         self.mbox.set_height(dialog_height)
 
         if content_height + 40 > max_dialog_height:
