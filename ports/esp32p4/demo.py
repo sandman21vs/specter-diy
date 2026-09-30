@@ -27,11 +27,10 @@ PALETTE = (RED, GREEN, BLUE, YELLOW, 0xF81F)
 
 
 def screen():
-    """Envolve o framebuffer do painel num FrameBuffer, sem copia.
+    """Envolve o buffer de desenho fora de tela num FrameBuffer.
 
-    p4board.framebuffer() devolve um memoryview gravavel apontando direto para
-    a memoria que o controlador DPI varre. Escrever nele e desenhar; nada e
-    enviado ao painel ate p4board.flush().
+    Escrever no memoryview nao altera o scanout. p4board.flush() copia uma
+    imagem completa para o framebuffer livre e a apresenta apos um quadro.
     """
     return framebuf.FrameBuffer(
         p4board.framebuffer(), p4board.WIDTH, p4board.HEIGHT, framebuf.RGB565
@@ -73,8 +72,8 @@ def draw(seconds=20):
             total += 1
             g.fill_rect(max(0, x - 6), max(0, y - 6), 12, 12,
                         PALETTE[point_id % len(PALETTE)])
-            # Faixa estreita em vez da tela inteira: o flush custa proporcional
-            # a area, e a 50 Hz isso importa.
+            # A API conserva a faixa para compatibilidade, mas apresenta o
+            # quadro completo para manter os dois buffers em sincronia.
             top = max(0, y - 8)
             p4board.flush(top, min(20, p4board.HEIGHT - top))
         time.sleep_ms(20)

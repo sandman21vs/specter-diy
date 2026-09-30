@@ -156,16 +156,17 @@ p4board.init()                      # display + touch; devolve True se o touch s
 g = framebuf.FrameBuffer(p4board.framebuffer(),
                          p4board.WIDTH, p4board.HEIGHT, framebuf.RGB565)
 g.fill_rect(40, 60, 400, 90, 0xF800)
-p4board.flush()                     # ou flush(y, altura) para uma faixa
+p4board.flush()                     # flush(y, altura) segue aceito, apresenta o quadro todo
 p4board.backlight(100)              # 0..100
 p4board.touch()                     # ((id, x, y, size), ...)
 p4board.radio_off()                 # segura o ESP32-C6 em reset
 ```
 
-`framebuffer()` devolve um `memoryview` gravável apontando **direto** para a
-memória que o controlador DPI varre — sem cópia. É o que permite usar o
-`framebuf` embutido do MicroPython hoje e apontar um draw buffer do LVGL para
-o mesmo endereço depois.
+`framebuffer()` devolve um `memoryview` RGB565 gravável fora dos buffers de
+scanout. `flush()` copia o quadro completo para o buffer livre e aguarda a
+troca segura de quadro. O LVGL usa diretamente os dois buffers de scanout do
+painel, em renderização FULL, e espera o callback de fim de quadro antes de
+reutilizar o buffer anterior.
 
 ### Verificado na placa
 
@@ -173,7 +174,7 @@ o mesmo endereço depois.
 |---|---|
 | `import p4board` | 480 x 800 |
 | `p4board.init()` | `True` (display e touch) |
-| `framebuffer()` | 768.000 bytes = 480 x 800 x 2 |
+| `framebuffer()` | 768.000 bytes = 480 x 800 x 2, off-screen |
 | Desenho + `flush()` | padrão de barras visível no painel |
 | Touch | 819 pontos em 20 s a 50 Hz, cobrindo x 4–475, y 8–797 |
 | Endereço do GT911 | **0x14** (backup) |

@@ -2,9 +2,9 @@
  * @file modp4board.c
  * @brief MicroPython bindings for the Waveshare ESP32-P4 4.3-C board.
  *
- * Exposes the panel framebuffer directly as a writable memoryview so that
- * MicroPython's built-in framebuf.FrameBuffer can draw into it with no copy,
- * and so an LVGL draw buffer can later point at the same memory.
+ * Exposes an off-screen RGB565 buffer as a writable memoryview for the simple
+ * MicroPython framebuffer demo. LVGL uses the panel's synchronized pair of
+ * scanout buffers directly through the separate C API.
  */
 
 #include "board_config.h"
@@ -66,8 +66,8 @@ static mp_obj_t p4board_framebuffer_fn(void) {
     if (!fb) {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("display not initialised"));
     }
-    /* RGB565: two bytes per pixel. Handed out as bytes so framebuf can wrap it
-     * directly with framebuf.RGB565. */
+    /* RGB565: two bytes per pixel. This is an off-screen buffer; p4board.flush
+     * copies and presents it through the synchronized panel back buffer. */
     size_t nbytes = (size_t)P4BOARD_LCD_WIDTH * P4BOARD_LCD_HEIGHT * 2u;
     return mp_obj_new_memoryview('B' | MP_OBJ_ARRAY_TYPECODE_FLAG_RW, nbytes, fb);
 }

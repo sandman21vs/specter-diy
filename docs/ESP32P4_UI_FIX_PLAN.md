@@ -1,7 +1,16 @@
 # ESP32-P4: PIN-Dialog und Button-Flackern
 
 Umsetzungsauftrag für **GPT-6 Luna, Reasoning xHigh**. Stand: 30.09.2026.
-Dieser Branch enthält zunächst nur den Plan; die Fehler wurden noch nicht auf Hardware behoben.
+
+## Umgesetzte Änderungen
+
+- `Modal.set_text()` setzt zuerst Breite und Text, aktualisiert dann das LVGL-Layout und misst erst danach die Texthöhe. Der dunkle Dialog bleibt opak, erhält eine gut lesbare Textfarbe, wird innerhalb der verfügbaren Bildschirmränder zentriert und begrenzt sehr lange Meldungen mit vertikalem Scrollen.
+- `Screen.show_loader()` behält beide `update()`-Aufrufe für die Präsentation vor dem blockierenden PIN-Aufruf. Die künstlichen Leerzeilen am Anfang und Ende des Loadertexts entfallen; Dialog-Padding und ein Abstand zwischen Titel und Meldung bleiben.
+- LVGL rendert vollständige RGB565-Frames abwechselnd in die zwei vom IDF-DPI-Treiber verwalteten Panelpuffer. Der BSP wartet auf `on_frame_buf_complete`: zuerst auf eine bestätigte Framegrenze vor dem Umschalten, danach auf die Freigabe des vorherigen Scanout-Puffers. Der ISR-Callback weckt nur ein Semaphore; LVGL wird genau einmal aus dem normalen Flush-Kontext freigegeben.
+- Die öffentliche Python-Framebuffer-API überschreibt keinen Scanoutpuffer mehr. Ihr separater 768.000-Byte-Arbeitspuffer wird erst bei `p4board.framebuffer()` angelegt; `p4board.flush(y, height)` validiert den bisherigen Bereich weiterhin, kopiert aber ein vollständiges Bild in den freien Panelpuffer und präsentiert es synchronisiert.
+- Es wurden keine F469-spezifischen Register, Speicheradressen oder DMA-Aufrufe übernommen. Die beiden Scanoutpuffer benötigen zusammen 1.536.000 Byte PSRAM; der zusätzliche API-Arbeitspuffer wird im normalen LVGL-Ablauf nicht reserviert.
+
+Die IDF-5.5.5- und LVGL-Quellen wurden auf Framebufferzuordnung, Cache-Synchronisation, Frameabschluss und benötigte Python-Bindings geprüft. Der native Python-Testlauf besteht aus fünf Tests und war vor dem Firmware-Build erfolgreich. Build-, Hardware- und Paketnachweise werden nach Abschluss ergänzt; ein fehlender Hardware-Smoke-Test wird ausdrücklich ausgewiesen.
 
 ## 1. Arbeitsort und verbindliche Basis
 

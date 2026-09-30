@@ -5,11 +5,10 @@
  * Modelado a partir de f469-disco/usermods/udisplay_f469/lv_stm_hal/, que faz
  * o mesmo para a Discovery F469 em 73 linhas.
  *
- * Diferenca principal: o F469 renderiza num buffer de trabalho e copia para o
- * LTDC a cada flush. Aqui o LVGL desenha DIRETO no framebuffer que o
- * controlador DPI varre -- p4board_framebuffer() devolve exatamente essa
- * memoria, e lv_conf.h esta em RGB565 para casar com o formato do painel.
- * O flush entao so precisa avisar o painel de qual faixa mudou.
+ * O LVGL usa os dois framebuffers RGB565 do painel em modo FULL. Cada quadro
+ * e terminado por inteiro num buffer livre; o flush espera o callback de fim
+ * de quadro do IDF que libera o framebuffer anterior. Assim
+ * a CPU nunca escreve no buffer que o DPI esta varrendo.
  */
 
 #include "lv_p4_hal.h"
@@ -21,6 +20,8 @@
 #include "p4board.h"
 
 static const char *TAG = "lv-p4";
+static bool flush_error_reported;
+static bool invalid_area_reported;
 
 static void tft_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
 static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data);
@@ -31,35 +32,45 @@ void tft_init(void) {
         return;
     }
 
-    uint16_t *framebuffer = p4board_framebuffer();
+    uint16_t *framebuffer0 = NULL;
+    uint16_t *framebuffer1 = NULL;
+    if (p4board_framebuffers(&framebuffer0, &framebuffer1) != ESP_OK) {
+        ESP_LOGE(TAG, "panel framebuffers unavailable; LVGL will have nothing to draw on");
+        return;
+    }
     size_t nbytes = (size_t)P4BOARD_LCD_WIDTH * P4BOARD_LCD_HEIGHT * 2u;
 
     lv_display_t *disp = lv_display_create(P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT);
     lv_display_set_flush_cb(disp, tft_flush);
-    /* DIRECT: o buffer do LVGL e o framebuffer do painel, sem copia. */
-    lv_display_set_buffers(disp, framebuffer, NULL, nbytes,
-        LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* Start by drawing into fb1; fb0 is the initial scanout buffer. */
+    lv_display_set_buffers(disp, framebuffer1, framebuffer0, nbytes,
+        LV_DISPLAY_RENDER_MODE_FULL);
 
     p4board_backlight(100);
-    ESP_LOGI(TAG, "LVGL on %ux%u RGB565, direct render",
+    ESP_LOGI(TAG, "LVGL on %ux%u RGB565, double-buffered full render",
         P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT);
 }
 
 static void tft_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
-    (void)px_map;  /* Ja e o framebuffer: nao ha o que copiar. */
-
-    if (area->y2 >= area->y1) {
-        int32_t y = area->y1 < 0 ? 0 : area->y1;
-        int32_t height = area->y2 - y + 1;
-        if (y < P4BOARD_LCD_HEIGHT) {
-            if (height > P4BOARD_LCD_HEIGHT - y) {
-                height = P4BOARD_LCD_HEIGHT - y;
-            }
-            /* O painel DPI varre continuamente e as escritas RGB565 ficam em
-             * cache. Commitar a faixa inteira evita as bandas e linhas
-             * fantasma que aparecem ao commitar so as scanlines do texto. */
-            p4board_flush((uint16_t)y, (uint16_t)height);
+    if (!px_map || area->x1 != 0 || area->y1 != 0 ||
+        area->x2 != P4BOARD_LCD_WIDTH - 1 ||
+        area->y2 != P4BOARD_LCD_HEIGHT - 1) {
+        if (!invalid_area_reported) {
+            ESP_LOGE(TAG, "FULL render produced an invalid flush area");
+            invalid_area_reported = true;
         }
+        lv_display_flush_ready(disp);
+        return;
+    }
+
+    /* The IDF DPI driver accepts panel framebuffer pointers and synchronizes
+     * the complete dirty area out of cache. The BSP queues the frame at a
+     * completed-frame boundary, then waits until the old scanout buffer is
+     * released before LVGL may use it for the next render. */
+    esp_err_t result = p4board_present_framebuffer((const uint16_t *)px_map);
+    if (result != ESP_OK && !flush_error_reported) {
+        ESP_LOGE(TAG, "framebuffer presentation failed: %s", esp_err_to_name(result));
+        flush_error_reported = true;
     }
     lv_display_flush_ready(disp);
 }
