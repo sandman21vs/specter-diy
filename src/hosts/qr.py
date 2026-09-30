@@ -668,6 +668,7 @@ class QRHost(Host):
             scr=scr.page,
             style="hint",
         )
+        info.update_layout()
 
         reset_y = info.get_y() + info.get_height() + 30
 

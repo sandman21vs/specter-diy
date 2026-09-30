@@ -39,25 +39,29 @@ class HostSettings(Prompt):
         y = 40
         if note is not None:
             self.note = add_label(note, style="hint", scr=self)
+            self.note.update_layout()
             self.note.align_to(self.title, lv.ALIGN.OUT_BOTTOM_MID, 0, 5)
-            y += self.note.get_height()
+            y += self.note.get_height() + 5
         self.controls = controls
         self.switches = []
         for control in controls:
             label = add_label(control["label"], y, scr=self.page)
+            label.update_layout()
             hint = add_label(
                 control.get("hint", ""),
-                y + 30,
+                y + label.get_height() + 5,
                 scr=self.page,
                 style="hint",
             )
+            hint.update_layout()
             switch = create_setting_switch(self.page)
             switch.align_to(hint, lv.ALIGN.OUT_BOTTOM_MID, 0, 10)
+            switch.update_layout()
             off, on = add_switch_labels(self.page, switch)
             if control.get("value", False):
                 switch.add_state(lv.STATE.CHECKED)
             self.switches.append(switch)
-            y = on.get_y() + 80
+            y = switch.get_y() + switch.get_height() + 28
         self.next_y = y
         if not controls:
             label = add_label(controls_empty_text, y, scr=self.page)
