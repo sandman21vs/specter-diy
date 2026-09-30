@@ -61,3 +61,14 @@ Firmware SHA-256:
 
 Build, flash, modal probe and boot logs are alongside the ZIP in the unpacked
 `specter-diy-wave_43-ui-fixes-35191318` directory.
+
+## PR review follow-up
+
+The follow-up changes fail closed when a framebuffer present begins and does
+not complete: the displayed-buffer identity becomes unknown, and both direct
+present and legacy flush paths reject further use until display deinit/init.
+This prevents a later legacy `memcpy` from targeting a possibly active buffer.
+Frame completions now use a counting semaphore with a clean count before each
+switch request, so two events remain observable if they arrive before the
+waiting task runs. The ESP-IDF build for this follow-up is recorded in the PR
+commit history; the board was not reflashed for these internal error-path fixes.

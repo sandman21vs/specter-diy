@@ -128,6 +128,7 @@ static uint16_t *lcd_framebuffers[2];
 static uint16_t *drawing_framebuffer;
 static SemaphoreHandle_t frame_complete_semaphore;
 static uint8_t displayed_framebuffer;
+static bool framebuffer_state_known;
 static bool lvgl_owns_framebuffers;
 static bool display_timeout_reported;
 static bool backlight_timer_initialized;
@@ -298,7 +299,9 @@ esp_err_t p4board_display_init(void) {
         .flags.use_dma2d = false,
     };
 
-    frame_complete_semaphore = xSemaphoreCreateBinary();
+    /* Keep frame completions as a count: two DMA completions may arrive
+     * before the waiting task runs, and both are needed for a safe handoff. */
+    frame_complete_semaphore = xSemaphoreCreateCounting(UINT32_MAX, 0);
     if (!frame_complete_semaphore) {
         result = ESP_ERR_NO_MEM;
         goto fail;
@@ -329,6 +332,7 @@ esp_err_t p4board_display_init(void) {
     lcd_framebuffers[0] = framebuffer0;
     lcd_framebuffers[1] = framebuffer1;
     displayed_framebuffer = 0;
+    framebuffer_state_known = true;
     lvgl_owns_framebuffers = false;
 
     ESP_LOGI(TAG, "ST7701 %ux%u active: DSI=%u lanes at %u Mbps, LDO=%d/%d mV",
@@ -367,6 +371,7 @@ void p4board_display_deinit(void) {
     lcd_framebuffers[0] = NULL;
     lcd_framebuffers[1] = NULL;
     displayed_framebuffer = 0;
+    framebuffer_state_known = false;
     lvgl_owns_framebuffers = false;
     if (drawing_framebuffer) {
         heap_caps_free(drawing_framebuffer);
@@ -426,6 +431,9 @@ esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
     if (!dpi_panel || !framebuffer || !frame_complete_semaphore) {
         return ESP_ERR_INVALID_STATE;
     }
+    if (!framebuffer_state_known) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     uint8_t framebuffer_index;
     if (framebuffer == lcd_framebuffers[0]) {
@@ -436,18 +444,24 @@ esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    /* Start from a clean event count. Any completion posted after this point
+     * is retained individually, even if multiple frames finish before the
+     * task wakes up. */
+    while (xSemaphoreTake(frame_complete_semaphore, 0) == pdTRUE) {
+    }
+
+    /* Once a switch is requested, neither the requested buffer nor the prior
+     * scanout buffer is safe to infer after an error or timeout. */
+    framebuffer_state_known = false;
     esp_err_t result = esp_lcd_panel_draw_bitmap(dpi_panel, 0, 0,
         P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT, framebuffer);
     if (result != ESP_OK) {
         return result;
     }
-    /* Discard events that predate the queued frame. The IDF ISR snapshots
-     * cur_fb_index before restarting DMA, then gives our semaphore. An ISR
-     * already in flight may still report the old selection after draw_bitmap
-     * returns. Two NEW completions cover that race: by the second boundary
-     * the queued frame is selected and the previous scanout buffer is free. */
-    while (xSemaphoreTake(frame_complete_semaphore, 0) == pdTRUE) {
-    }
+    /* The IDF ISR snapshots cur_fb_index before restarting DMA. An ISR already
+     * in flight may report the old selection, so wait for both the selection
+     * boundary and the following completion before reusing the previous
+     * scanout buffer. */
     result = wait_for_display_event(frame_complete_semaphore, "frame selection");
     if (result == ESP_OK) {
         result = wait_for_display_event(frame_complete_semaphore,
@@ -455,6 +469,7 @@ esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
     }
     if (result == ESP_OK) {
         displayed_framebuffer = framebuffer_index;
+        framebuffer_state_known = true;
     }
     return result;
 }
@@ -472,6 +487,11 @@ esp_err_t p4board_flush(uint16_t y, uint16_t height) {
         return ESP_ERR_INVALID_STATE;
     }
     if (!dpi_panel || !drawing_framebuffer || !lcd_framebuffers[0] || !lcd_framebuffers[1]) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* A timed-out present may already have switched the panel. Do not derive
+     * a writable back buffer from a stale displayed_framebuffer value. */
+    if (!framebuffer_state_known) {
         return ESP_ERR_INVALID_STATE;
     }
     if (y >= P4BOARD_LCD_HEIGHT || height > P4BOARD_LCD_HEIGHT - y) {
