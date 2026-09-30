@@ -77,4 +77,4 @@ class Modal(lv.obj):
             self.mbox.remove_flag(lv.obj.FLAG.SCROLLABLE)
             self.label.center()
 
-        self.mbox.align(lv.ALIGN.CENTER)
+        self.mbox.align(lv.ALIGN.CENTER, 0, 0)
