@@ -152,32 +152,32 @@ Board `WAVESHARE_P4_43` e módulo C `p4board`, **validados no hardware**.
 
 ```python
 import p4board, framebuf
-p4board.init()                      # display + touch; devolve True se o touch subiu
+p4board.init()                      # display + touch; returns True if touch initialized
 g = framebuf.FrameBuffer(p4board.framebuffer(),
                          p4board.WIDTH, p4board.HEIGHT, framebuf.RGB565)
 g.fill_rect(40, 60, 400, 90, 0xF800)
-p4board.flush()                     # flush(y, altura) segue aceito, apresenta o quadro todo
+p4board.flush()                     # flush(y, height) is still supported; presents the full frame
 p4board.backlight(100)              # 0..100
 p4board.touch()                     # ((id, x, y, size), ...)
-p4board.radio_off()                 # segura o ESP32-C6 em reset
+p4board.radio_off()                 # holds the ESP32-C6 in reset
 ```
 
-`framebuffer()` devolve um `memoryview` RGB565 gravável fora dos buffers de
-scanout. `flush()` copia o quadro completo para o buffer livre e aguarda a
-troca segura de quadro. O LVGL usa diretamente os dois buffers de scanout do
-painel, em renderização FULL, e espera o callback de fim de quadro antes de
-reutilizar o buffer anterior.
+`framebuffer()` returns a writable RGB565 `memoryview` outside the scanout
+buffers. `flush()` copies the complete frame into the free buffer and waits for
+a safe frame switch. LVGL uses the panel's two scanout buffers directly in FULL
+render mode and waits for the frame-completion callback before reusing the
+previous buffer.
 
-### Verificado na placa
+### Verified on hardware
 
 | Item | Resultado |
 |---|---|
 | `import p4board` | 480 x 800 |
-| `p4board.init()` | `True` (display e touch) |
-| `framebuffer()` | 768.000 bytes = 480 x 800 x 2, off-screen |
-| Desenho + `flush()` | padrão de barras visível no painel |
-| Touch | 819 pontos em 20 s a 50 Hz, cobrindo x 4–475, y 8–797 |
-| Endereço do GT911 | **0x14** (backup) |
+| `p4board.init()` | `True` (display and touch) |
+| `framebuffer()` | 768,000 bytes = 480 x 800 x 2, off-screen |
+| Drawing + `flush()` | color-bar pattern visible on the panel |
+| Touch | 819 points in 20 s at 50 Hz, covering x 4–475, y 8–797 |
+| GT911 address | **0x14** (backup) |
 
 ### O endereço 0x14
 
