@@ -137,7 +137,9 @@ class InputScreen(Screen):
         self.ta.add_style(styles["ta_cursor"], lv.PART.CURSOR | lv.STATE.FOCUSED)
         self.ta.set_width(HOR_RES - 2 * PADDING)
         self.ta.set_x(PADDING)
-        self.ta.set_style_text_align(lv.TEXT_ALIGN.LEFT, 0)
+        # Keep short inputs (including passphrases) centered in the entry area
+        # while the one-line textarea scrolls to follow the cursor when full.
+        self.ta.set_style_text_align(lv.TEXT_ALIGN.CENTER, 0)
         self.ta.set_y(PADDING + 150)
         self.ta.set_one_line(True)
         self.ta.set_cursor_pos(lv.TEXTAREA_CURSOR_LAST)

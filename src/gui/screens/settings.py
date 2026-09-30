@@ -4,15 +4,28 @@ from ..common import add_label, add_button
 from ..components import styles
 from ..decorators import on_release
 
+SWITCH_WIDTH = 32
+SWITCH_HEIGHT = 18
+SWITCH_LABEL_GAP = 18
+
+
+def create_setting_switch(parent):
+    switch = lv.switch(parent)
+    # Match the more compact switch used by the original Specter interface;
+    # LVGL's default dimensions differ slightly across display themes.
+    switch.set_size(SWITCH_WIDTH, SWITCH_HEIGHT)
+    return switch
+
+
 def add_switch_labels(parent, switch):
     off = lv.label(parent)
     off.set_text("OFF")
     off.add_style(styles["small"], 0)
-    off.align_to(switch, lv.ALIGN.OUT_LEFT_MID, -24, 0)
+    off.align_to(switch, lv.ALIGN.OUT_LEFT_MID, -SWITCH_LABEL_GAP, 0)
     on = lv.label(parent)
     on.set_text("ON")
     on.add_style(styles["small"], 0)
-    on.align_to(switch, lv.ALIGN.OUT_RIGHT_MID, 24, 0)
+    on.align_to(switch, lv.ALIGN.OUT_RIGHT_MID, SWITCH_LABEL_GAP, 0)
     return off, on
 
 class HostSettings(Prompt):
@@ -38,7 +51,7 @@ class HostSettings(Prompt):
                 scr=self.page,
                 style="hint",
             )
-            switch = lv.switch(self.page)
+            switch = create_setting_switch(self.page)
             switch.align_to(hint, lv.ALIGN.OUT_BOTTOM_MID, 0, 10)
             off, on = add_switch_labels(self.page, switch)
             if control.get("value", False):
@@ -75,7 +88,7 @@ class DevSettings(Prompt):
             scr=self.page,
             style="hint",
         )
-        self.usb_switch = lv.switch(self.page)
+        self.usb_switch = create_setting_switch(self.page)
         self.usb_switch.align_to(usb_hint, lv.ALIGN.OUT_BOTTOM_MID, 0, 20)
         add_switch_labels(self.page, self.usb_switch)
         if usb:
