@@ -4,15 +4,15 @@ from ..common import add_label, add_button
 from ..components import styles
 from ..decorators import on_release
 
-SWITCH_WIDTH = 32
-SWITCH_HEIGHT = 18
-SWITCH_LABEL_GAP = 18
+SWITCH_WIDTH = 56
+SWITCH_HEIGHT = 32
+SWITCH_LABEL_GAP = 24
 
 
 def create_setting_switch(parent):
     switch = lv.switch(parent)
-    # Match the more compact switch used by the original Specter interface;
-    # LVGL's default dimensions differ slightly across display themes.
+    # Set an explicit, larger hit target so the settings switch is easy to see
+    # and use on the ESP32-P4 display.
     switch.set_size(SWITCH_WIDTH, SWITCH_HEIGHT)
     return switch
 
