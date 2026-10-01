@@ -26,18 +26,25 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include "driver/i2c_master.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_video_device.h"
 #include "esp_video_init.h"
+#include "esp_video_ioctl.h"
 #include "k_quirc.h"
 #include "linux/videodev2.h"
 
 #define OV5647_SCCB_ADDR 0x36
 #define SC2336_SCCB_ADDR 0x30
 #define BUFFER_COUNT     2
+/* Igual ao Kern: sem timeout o VIDIOC_DQBUF espera para sempre quando nenhum
+ * quadro chega, e como scan() roda no loop do MicroPython isso congela o app
+ * inteiro -- spinner parado na tela, sem erro nenhum. */
+#define DQBUF_TIMEOUT_MS 100
 
 static const char *TAG = "p4camera";
 
@@ -61,6 +68,10 @@ static uint16_t gray_width;
 static uint16_t gray_height;
 static bool holding_frame;
 static bool streaming;
+/* esp_video_init() registra os dispositivos V4L2 uma unica vez; chama-lo de
+ * novo depois de um deinit (ou de uma falha no meio do init) falha, e a camera
+ * so voltaria reiniciando a placa. Fica inicializado ate o reset. */
+static bool video_driver_ready;
 
 /* Declarado em p4board.h; evitamos incluir o header do board aqui para manter
  * este componente independente da BSP. */
@@ -150,11 +161,14 @@ esp_err_t p4camera_init(void) {
         .pwdn_pin = -1,
     };
     esp_video_init_config_t config = { .csi = &csi_config };
-    esp_err_t err = esp_video_init(&config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_video_init failed: %s", esp_err_to_name(err));
-        init_stage = "esp_video_init";
-        return err;
+    if (!video_driver_ready) {
+        esp_err_t err = esp_video_init(&config);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_video_init failed: %s", esp_err_to_name(err));
+            init_stage = "esp_video_init";
+            return err;
+        }
+        video_driver_ready = true;
     }
 
     video_fd = open(ESP_VIDEO_MIPI_CSI_DEVICE_NAME, O_RDWR);
@@ -216,6 +230,16 @@ esp_err_t p4camera_init(void) {
         }
     }
     pixel_format = chosen;
+
+    struct timeval timeout = {
+        .tv_sec = DQBUF_TIMEOUT_MS / 1000,
+        .tv_usec = (DQBUF_TIMEOUT_MS % 1000) * 1000,
+    };
+    if (ioctl(video_fd, VIDIOC_S_DQBUF_TIMEOUT, &timeout) != 0) {
+        ESP_LOGE(TAG, "S_DQBUF_TIMEOUT failed: %s", strerror(errno));
+        init_stage = "DQBUF timeout";
+        goto fail;
+    }
 
     if (start_streaming() != ESP_OK) {
         init_stage = "streaming";
@@ -295,12 +319,72 @@ esp_err_t p4camera_capture(uint8_t **data, size_t *length) {
     current.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     current.memory = V4L2_MEMORY_MMAP;
     if (ioctl(video_fd, VIDIOC_DQBUF, &current) != 0) {
-        return ESP_FAIL;
+        /* Sem quadro dentro de DQBUF_TIMEOUT_MS: o chamador tenta de novo. */
+        return (errno == ETIMEDOUT || errno == EPERM) ? ESP_ERR_TIMEOUT : ESP_FAIL;
     }
     holding_frame = true;
     if (data) *data = buffers[current.index];
     if (length) *length = current.bytesused;
     return ESP_OK;
+}
+
+/* ------------------------------- Previa --------------------------------- */
+
+static uint16_t *preview_buffer;
+static size_t preview_capacity;
+static uint16_t preview_width;
+static uint16_t preview_height;
+static volatile uint32_t preview_frames;
+
+esp_err_t p4camera_preview_enable(uint16_t width, uint16_t height, uint16_t **buffer) {
+    if (width == 0 || height == 0 || !buffer) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    size_t needed = (size_t)width * height;
+    if (!preview_buffer) {
+        preview_buffer = heap_caps_calloc(needed, sizeof(uint16_t),
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!preview_buffer) {
+            return ESP_ERR_NO_MEM;
+        }
+        preview_capacity = needed;
+    } else if (needed > preview_capacity) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    preview_width = width;
+    preview_height = height;
+    *buffer = preview_buffer;
+    return ESP_OK;
+}
+
+void p4camera_preview_disable(void) {
+    preview_width = preview_height = 0;
+}
+
+uint32_t p4camera_preview_frames(void) {
+    return preview_frames;
+}
+
+/* Recorta o centro quadrado do quadro RGB565 e reduz por vizinho mais
+ * proximo. Quadrado porque o QR e quadrado; o centro porque e para onde a
+ * pessoa aponta. Passo em ponto fixo 16.16 para nao dividir por pixel. */
+static void render_preview(const uint8_t *src) {
+    const uint16_t *pixels = (const uint16_t *)src;
+    uint16_t side = frame_width < frame_height ? frame_width : frame_height;
+    uint16_t x0 = (frame_width - side) / 2;
+    uint16_t y0 = (frame_height - side) / 2;
+    uint32_t step_x = ((uint32_t)side << 16) / preview_width;
+    uint32_t step_y = ((uint32_t)side << 16) / preview_height;
+    uint16_t *out = preview_buffer;
+    uint32_t fy = 0;
+    for (uint16_t y = 0; y < preview_height; ++y, fy += step_y) {
+        const uint16_t *row = pixels + (size_t)(y0 + (fy >> 16)) * frame_width + x0;
+        uint32_t fx = 0;
+        for (uint16_t x = 0; x < preview_width; ++x, fx += step_x) {
+            *out++ = row[fx >> 16];
+        }
+    }
+    preview_frames++;
 }
 
 /* --------------------------------- QR ----------------------------------- */
@@ -375,6 +459,9 @@ esp_err_t p4camera_scan(uint8_t *payload, size_t capacity, size_t *length) {
         return err;
     }
     rgb565_to_gray(frame);
+    if (preview_width && preview_buffer) {
+        render_preview(frame);
+    }
     p4camera_release();
 
     k_quirc_result_t result;

@@ -87,8 +87,9 @@ static mp_obj_t camera_scan_fn(void) {
     static uint8_t payload[4096];
     size_t length = 0;
     esp_err_t err = p4camera_scan(payload, sizeof(payload), &length);
-    if (err == ESP_ERR_NOT_FOUND) {
-        /* Nenhum QR legivel neste quadro: caso normal, nao erro. */
+    if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_TIMEOUT) {
+        /* Nenhum QR legivel neste quadro, ou o quadro nao chegou a tempo:
+         * casos normais do laco de leitura, nao erro. */
         return mp_const_none;
     }
     check(err, "scan");
@@ -107,6 +108,33 @@ static mp_obj_t camera_gray_size_fn(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_gray_size_obj, camera_gray_size_fn);
 
+/* camera.preview(w, h) -> memoryview RGB565 de w*h*2 bytes, atualizado a cada
+ * scan(). O buffer pertence ao driver e nunca e liberado, entao a tela pode
+ * continuar apontando para ele. */
+static mp_obj_t camera_preview_fn(mp_obj_t width_obj, mp_obj_t height_obj) {
+    mp_int_t width = mp_obj_get_int(width_obj);
+    mp_int_t height = mp_obj_get_int(height_obj);
+    if (width <= 0 || height <= 0 || width > 1024 || height > 1024) {
+        mp_raise_ValueError(MP_ERROR_TEXT("preview size out of range"));
+    }
+    uint16_t *buffer = NULL;
+    check(p4camera_preview_enable((uint16_t)width, (uint16_t)height, &buffer), "preview");
+    return mp_obj_new_memoryview('B' | MP_OBJ_ARRAY_TYPECODE_FLAG_RW,
+        (size_t)width * (size_t)height * 2u, buffer);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(camera_preview_obj, camera_preview_fn);
+
+static mp_obj_t camera_preview_off_fn(void) {
+    p4camera_preview_disable();
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(camera_preview_off_obj, camera_preview_off_fn);
+
+static mp_obj_t camera_preview_frames_fn(void) {
+    return mp_obj_new_int_from_uint(p4camera_preview_frames());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(camera_preview_frames_obj, camera_preview_frames_fn);
+
 static const mp_rom_map_elem_t camera_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_camera) },
     { MP_ROM_QSTR(MP_QSTR_init),     MP_ROM_PTR(&camera_init_obj) },
@@ -119,6 +147,9 @@ static const mp_rom_map_elem_t camera_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_release),  MP_ROM_PTR(&camera_release_obj) },
     { MP_ROM_QSTR(MP_QSTR_scan),     MP_ROM_PTR(&camera_scan_obj) },
     { MP_ROM_QSTR(MP_QSTR_gray_size), MP_ROM_PTR(&camera_gray_size_obj) },
+    { MP_ROM_QSTR(MP_QSTR_preview),  MP_ROM_PTR(&camera_preview_obj) },
+    { MP_ROM_QSTR(MP_QSTR_preview_off), MP_ROM_PTR(&camera_preview_off_obj) },
+    { MP_ROM_QSTR(MP_QSTR_preview_frames), MP_ROM_PTR(&camera_preview_frames_obj) },
 };
 static MP_DEFINE_CONST_DICT(camera_module_globals, camera_module_globals_table);
 

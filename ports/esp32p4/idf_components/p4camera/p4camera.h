@@ -67,4 +67,18 @@ esp_err_t p4camera_scan(uint8_t *payload, size_t capacity, size_t *length);
 /** Dimensoes do buffer em tons de cinza usado pelo decodificador. */
 void p4camera_gray_size(uint16_t *width, uint16_t *height);
 
+/**
+ * Previa da camera para a tela. Com a previa ligada, cada p4camera_scan()
+ * tambem grava em *buffer o centro quadrado do quadro, reduzido para
+ * width x height em RGB565 -- o formato do painel e do LVGL.
+ *
+ * O buffer e alocado na primeira chamada e nunca liberado: a tela pode
+ * continuar apontando para ele depois que a camera parar. Chamadas seguintes
+ * reaproveitam o mesmo buffer, entao o tamanho maximo e o da primeira.
+ */
+esp_err_t p4camera_preview_enable(uint16_t width, uint16_t height, uint16_t **buffer);
+void p4camera_preview_disable(void);
+/** Quantos quadros de previa ja foram gravados; muda a cada quadro novo. */
+uint32_t p4camera_preview_frames(void);
+
 #endif  // P4CAMERA_H
