@@ -92,9 +92,9 @@ static mp_obj_t p4board_touch_fn(void) {
     if (err == ESP_ERR_INVALID_STATE) {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("touch not initialised"));
     }
-    /* A malformed frame is reported as "no points" rather than an exception:
-     * callers poll this in a loop and a transient bad read should not abort
-     * the UI. Genuine absence and a rejected frame both yield an empty tuple. */
+    /* A malformed frame, or no new frame yet (ESP_ERR_NOT_FINISHED), is
+     * reported as "no points" rather than an exception: callers poll this in
+     * a loop and a transient bad read should not abort the UI. */
     mp_obj_t items[P4BOARD_TOUCH_MAX_POINTS];
     for (uint8_t i = 0; i < count; ++i) {
         mp_obj_t point[4] = {
