@@ -13,6 +13,13 @@ QR_WIDTH = const(320)
 FONT_SCALE_MINUS_TWO_PT = const(238)  # 26 / 28 * LVGL's 256 scale.
 BUTTON_LABEL_SCALE = const(192)  # 21 / 28 * LVGL's 256 scale.
 
+# Scaling a 28 pt label with transform_scale makes LVGL render it into a layer
+# and transform that layer in software: on the ESP32-P4 that was ~6 ms per
+# button label, most of the cost of drawing the main menu. Use the real font
+# size when the firmware has it, and keep the scaled fallback otherwise.
+BUTTON_LABEL_FONT = getattr(lv, "font_montserrat_22", None)
+PIN_KEYPAD_FONT = getattr(lv, "font_montserrat_26", None)
+
 
 def init_styles(dark=True):
     # LVGL 9.x theme and style initialization
@@ -88,8 +95,11 @@ def init_styles(dark=True):
     styles["btn_label"] = lv.style_t()
     styles["btn_label"].init()
     styles["btn_label"].set_text_color(ctxt)
-    styles["btn_label"].set_text_font(lv.font_montserrat_28)
-    styles["btn_label"].set_transform_scale(BUTTON_LABEL_SCALE)
+    if BUTTON_LABEL_FONT is not None:
+        styles["btn_label"].set_text_font(BUTTON_LABEL_FONT)
+    else:
+        styles["btn_label"].set_text_font(lv.font_montserrat_28)
+        styles["btn_label"].set_transform_scale(BUTTON_LABEL_SCALE)
 
     styles["page"] = lv.style_t()
     styles["page"].init()

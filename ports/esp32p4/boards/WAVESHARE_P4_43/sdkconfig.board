@@ -45,3 +45,13 @@ CONFIG_CAMERA_SC2336_MIPI_DEFAULT_FMT_RAW10_1280X720_30FPS=y
 # So usamos MIPI-CSI. O driver DVP vem ligado por padrao no P4 (LCDCAM) e nao
 # tem uso aqui.
 CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n
+
+# --- Cache L2 ---
+#
+# Igual ao Kern na mesma placa. Medido aqui: so pintar o fundo de 480x800 na
+# PSRAM levava 10 ms, mais da metade do custo de um quadro inteiro, e o gargalo
+# era a escrita na PSRAM atraves da cache, nao o desenho em si. Linhas de 128 B
+# fazem rajadas maiores no barramento; os 128 KB a mais saem da SRAM interna,
+# que tinha ~470 KB livres.
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y

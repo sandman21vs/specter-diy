@@ -27,6 +27,7 @@
 #include "board_config.h"
 #include "driver/ledc.h"
 #include "esp_attr.h"
+#include "esp_cache.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_io.h"
@@ -128,6 +129,14 @@ static uint16_t *lcd_framebuffers[2];
 static uint16_t *drawing_framebuffer;
 static SemaphoreHandle_t frame_complete_semaphore;
 static uint8_t displayed_framebuffer;
+/* Troca pedida por present_begin() e ainda nao confirmada por present_finish(). */
+static uint8_t pending_framebuffer;
+static bool present_pending;
+/* Quantos fins de quadro present_finish() precisa ver (1 ou 2, ver begin). */
+static uint8_t present_events_needed;
+/* Nucleo em que o ISR de fim de quadro roda; -1 ate o primeiro quadro. */
+static volatile int display_isr_core = -1;
+static portMUX_TYPE present_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool framebuffer_state_known;
 static bool lvgl_owns_framebuffers;
 static bool display_timeout_reported;
@@ -142,6 +151,7 @@ static bool IRAM_ATTR display_on_frame_complete(esp_lcd_panel_handle_t panel,
     (void)panel;
     (void)event_data;
     (void)user_ctx;
+    display_isr_core = xPortGetCoreID();
     BaseType_t task_woken = pdFALSE;
     if (frame_complete_semaphore) {
         xSemaphoreGiveFromISR(frame_complete_semaphore, &task_woken);
@@ -372,6 +382,7 @@ void p4board_display_deinit(void) {
     lcd_framebuffers[1] = NULL;
     displayed_framebuffer = 0;
     framebuffer_state_known = false;
+    present_pending = false;
     lvgl_owns_framebuffers = false;
     if (drawing_framebuffer) {
         heap_caps_free(drawing_framebuffer);
@@ -427,11 +438,11 @@ esp_err_t p4board_framebuffers(uint16_t **fb0, uint16_t **fb1) {
     return ESP_OK;
 }
 
-esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
+esp_err_t p4board_present_begin(const uint16_t *framebuffer) {
     if (!dpi_panel || !framebuffer || !frame_complete_semaphore) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!framebuffer_state_known) {
+    if (!framebuffer_state_known || present_pending) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -444,34 +455,80 @@ esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Start from a clean event count. Any completion posted after this point
-     * is retained individually, even if multiple frames finish before the
-     * task wakes up. */
-    while (xSemaphoreTake(frame_complete_semaphore, 0) == pdTRUE) {
+    /* Write the whole frame back from cache before the DMA can see it. Done
+     * here, outside the critical section below, because it is the slow part. */
+    size_t framebuffer_size = (size_t)P4BOARD_LCD_WIDTH * P4BOARD_LCD_HEIGHT
+        * sizeof(uint16_t);
+    esp_err_t result = esp_cache_msync((void *)framebuffer, framebuffer_size,
+        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    if (result != ESP_OK) {
+        return result;
     }
+
+    /* The IDF frame ISR reads cur_fb_index, restarts the DMA on that buffer,
+     * and only then reports the completion. If it can interleave with the
+     * switch below, an ISR already past its read reports a completion while
+     * the old buffer has been restarted -- so two completions are needed.
+     *
+     * When the ISR runs on this core, doing the drain and the switch with this
+     * core's interrupts masked rules that interleaving out: every completion
+     * counted afterwards comes from an ISR that read the new index, and it
+     * fires exactly when the old buffer's last transfer ended. One completion
+     * is then enough, which saves a whole panel frame (16.7 ms) per present.
+     * On any other core we keep the conservative two. */
+    bool same_core = display_isr_core == (int)xPortGetCoreID();
+    present_events_needed = same_core ? 1 : 2;
 
     /* Once a switch is requested, neither the requested buffer nor the prior
      * scanout buffer is safe to infer after an error or timeout. */
     framebuffer_state_known = false;
-    esp_err_t result = esp_lcd_panel_draw_bitmap(dpi_panel, 0, 0,
-        P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT, framebuffer);
+    portENTER_CRITICAL(&present_lock);
+    /* Start from a clean event count. Any completion posted after this point
+     * is retained individually, even if multiple frames finish before the
+     * task wakes up. */
+    while (xSemaphoreTakeFromISR(frame_complete_semaphore, NULL) == pdTRUE) {
+    }
+    /* A one-line area: draw_bitmap only selects the buffer and writes back
+     * that line, the full write-back already happened above. */
+    result = esp_lcd_panel_draw_bitmap(dpi_panel, 0, 0,
+        P4BOARD_LCD_WIDTH, 1, framebuffer);
+    portEXIT_CRITICAL(&present_lock);
     if (result != ESP_OK) {
         return result;
     }
+    pending_framebuffer = framebuffer_index;
+    present_pending = true;
+    return ESP_OK;
+}
+
+esp_err_t p4board_present_finish(void) {
+    if (!present_pending) {
+        return ESP_OK;
+    }
+    present_pending = false;
     /* The IDF ISR snapshots cur_fb_index before restarting DMA. An ISR already
      * in flight may report the old selection, so wait for both the selection
      * boundary and the following completion before reusing the previous
-     * scanout buffer. */
-    result = wait_for_display_event(frame_complete_semaphore, "frame selection");
-    if (result == ESP_OK) {
+     * scanout buffer. The semaphore counts completions since present_begin(),
+     * so if the caller did other work in between, these return immediately. */
+    esp_err_t result = wait_for_display_event(frame_complete_semaphore, "frame selection");
+    if (result == ESP_OK && present_events_needed > 1) {
         result = wait_for_display_event(frame_complete_semaphore,
             "frame-buffer completion");
     }
     if (result == ESP_OK) {
-        displayed_framebuffer = framebuffer_index;
+        displayed_framebuffer = pending_framebuffer;
         framebuffer_state_known = true;
     }
     return result;
+}
+
+esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
+    esp_err_t result = p4board_present_begin(framebuffer);
+    if (result != ESP_OK) {
+        return result;
+    }
+    return p4board_present_finish();
 }
 
 esp_err_t p4board_display_enabled(bool enabled) {
