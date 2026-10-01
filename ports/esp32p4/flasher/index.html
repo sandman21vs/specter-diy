@@ -7,7 +7,7 @@
     Adapted from the Kern Web Flasher (https://github.com/odudex/Kern, site/flash),
     MIT License, Copyright (c) 2025 Kern Contributors. See NOTICE.md.
   -->
-  <title>Specter-DIY ESP32-P4 Flasher</title>
+  <title>Specter-DIY ESP32-P4 Flasher (experimental)</title>
   <meta name="description" content="Flash Specter-DIY development builds to the Waveshare ESP32-P4 4.3-inch board from the browser.">
   <style>
     :root {
@@ -54,8 +54,28 @@
       border-radius: 6px; padding: 0.75rem 1rem;
       font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.45;
     }
-    .banner-warn  { background: rgba(210,153,34,0.1);  border: 1px solid var(--warn);  color: var(--warn); }
     .banner-error { background: rgba(248,81,73,0.1);   border: 1px solid var(--error); color: var(--error); display: none; }
+
+    .fork-alert {
+      border: 2px solid var(--error); border-radius: 8px; padding: 0.5rem; margin-bottom: 1rem;
+      background: repeating-linear-gradient(-45deg,
+        rgba(248,81,73,0.14) 0, rgba(248,81,73,0.14) 12px,
+        rgba(248,81,73,0.06) 12px, rgba(248,81,73,0.06) 24px);
+    }
+    .fork-alert .inner { background: var(--bg); border-radius: 5px; padding: 1.25rem 1.4rem; }
+    .fork-alert h2 { color: var(--error); font-size: 1.15rem; margin-bottom: 0.75rem; }
+    .fork-alert p, .fork-alert li { font-size: 0.875rem; line-height: 1.5; }
+    .fork-alert p { margin-bottom: 0.6rem; }
+    .fork-alert ul { padding-left: 1.2rem; margin-bottom: 0.75rem; }
+    .fork-alert li { margin-bottom: 0.3rem; }
+    .fork-alert a { color: var(--accent); }
+    .fork-alert .official { color: var(--muted); font-size: 0.85rem; margin: 0; }
+
+    .ack {
+      display: flex; gap: 0.6rem; align-items: flex-start;
+      font-size: 0.875rem; color: var(--text); margin-bottom: 1rem; cursor: pointer;
+    }
+    .ack input { margin-top: 0.2rem; accent-color: var(--error); width: 1rem; height: 1rem; flex: 0 0 auto; }
 
     .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
     .tab {
@@ -132,8 +152,8 @@
 <div class="container">
 
   <header>
-    <h1>Specter-DIY Web Flasher</h1>
-    <p>Flash Specter-DIY to the Waveshare ESP32-P4 4.3" board from your browser</p>
+    <h1>Specter-DIY ESP32-P4 Flasher</h1>
+    <p>Experimental builds of an unofficial port, flashed from the browser</p>
   </header>
 
   <div class="banner banner-error" id="compatBanner">
@@ -141,10 +161,27 @@
     Please use <strong>Google Chrome</strong>, <strong>Microsoft Edge</strong> or <strong>Brave</strong> on a desktop computer.
   </div>
 
-  <div class="banner banner-warn">
-    ⚠ <strong>Development builds. Do not use with real funds.</strong>
-    No secure boot and no flash encryption: anyone with physical access to the board can read or replace what is on it.
-    Flashing also <strong>wipes everything stored on the device</strong>. Use it to test and play, on testnet.
+  <div class="fork-alert" role="alert">
+    <div class="inner">
+      <h2>⚠ Unofficial port, not official Specter-DIY</h2>
+      <p>
+        This flasher writes firmware from
+        <a href="https://github.com/sandman21vs/specter-diy/tree/esp32-p4-port" target="_blank" rel="noopener">sandman21vs/specter-diy</a>,
+        an unofficial fork that runs Specter-DIY on the <strong>Waveshare ESP32-P4 4.3" board</strong>.
+      </p>
+      <ul>
+        <li><strong>Do not use it with real seeds or real funds.</strong> Testnet and throwaway keys only.</li>
+        <li>Not reviewed or endorsed by the Specter-DIY maintainers, never audited, and tested on one board.</li>
+        <li>Secure boot and flash encryption are not enabled: anyone with physical access to the board can read or replace what is on it.</li>
+        <li>Flashing <strong>wipes everything stored on the device</strong>. Builds are development snapshots and may misbehave.</li>
+        <li>No warranty and no support. Report problems to this fork, not to upstream Specter-DIY.</li>
+      </ul>
+      <p class="official">
+        Want the real thing? Use the
+        <a href="https://github.com/cryptoadvance/specter-diy" target="_blank" rel="noopener">official Specter-DIY</a>
+        on its supported hardware.
+      </p>
+    </div>
   </div>
 
   <div class="card">
@@ -188,6 +225,11 @@
 
   <div class="card">
     <div class="card-title">Flash</div>
+    <label class="ack" for="ackBox">
+      <input type="checkbox" id="ackBox" onchange="updateFlashEnabled()">
+      <span>I understand this is an unofficial, experimental build that has not been
+        reviewed or audited, and I will not use it with real seeds or real funds.</span>
+    </label>
     <div class="actions">
       <button class="btn btn-connect" id="connectBtn" onclick="toggleConnect()">🔌 Connect</button>
       <button class="btn btn-flash"   id="flashBtn"   onclick="startFlash()" disabled>⚡ Flash</button>
@@ -254,6 +296,13 @@ let transport   = null;
 let esploader   = null;
 let customFiles = null; // [{name, offset, data:Uint8Array}]
 let chipRev     = null; // major * 100 + minor, read on connect
+
+// Flashing needs a connected device and the experimental-build acknowledgement.
+function updateFlashEnabled() {
+  document.getElementById('flashBtn').disabled =
+    !esploader || !document.getElementById('ackBox').checked;
+}
+window.updateFlashEnabled = updateFlashEnabled;
 
 if (!('serial' in navigator)) {
   document.getElementById('compatBanner').style.display = 'block';
@@ -423,7 +472,7 @@ async function doConnect() {
 
     connectBtn.textContent = '⏏ Disconnect';
     connectBtn.classList.add('connected');
-    document.getElementById('flashBtn').disabled = false;
+    updateFlashEnabled();
   } catch (e) {
     log('Connection failed: ' + e.message, 'l-err');
     transport = null;
@@ -443,7 +492,7 @@ async function doDisconnect() {
   chipRev   = null;
   connectBtn.textContent = '🔌 Connect';
   connectBtn.classList.remove('connected');
-  document.getElementById('flashBtn').disabled = true;
+  updateFlashEnabled();
   connectBtn.disabled = false;
   log('Disconnected.');
 }
@@ -451,6 +500,10 @@ async function doDisconnect() {
 // ── Flash ────────────────────────────────────────────────────────────────────
 window.startFlash = async function () {
   if (!esploader) { log('Not connected.', 'l-err'); return; }
+  if (!document.getElementById('ackBox').checked) {
+    log('Confirm the warning above before flashing.', 'l-err');
+    return;
+  }
 
   const connectBtn = document.getElementById('connectBtn');
   const flashBtn   = document.getElementById('flashBtn');
@@ -514,7 +567,7 @@ window.startFlash = async function () {
   }
 
   connectBtn.disabled = false;
-  flashBtn.disabled   = false;
+  updateFlashEnabled();
 };
 </script>
 </body>
