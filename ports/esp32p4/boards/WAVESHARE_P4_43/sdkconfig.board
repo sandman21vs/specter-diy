@@ -1,0 +1,57 @@
+# Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C
+
+# 32 MB de PSRAM, confirmados no hardware (gc.mem_free ~31,6 MB no baseline).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# A placa tem 32 MB fisicos, mas mantemos a janela logica em 16 MB para ficar
+# alinhado com o layout do specter-bootloader.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# O painel MIPI DSI escreve o framebuffer em PSRAM por DMA. Sem isso o
+# esp_lcd_dpi entrega bandas e linhas fantasma no painel de varredura continua.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+# Perfil de desenvolvimento: sem Secure Boot, sem flash encryption, nenhum
+# eFuse queimado. Nao alterar sem decisao explicita.
+CONFIG_SECURE_BOOT=n
+CONFIG_SECURE_FLASH_ENC_ENABLED=n
+
+# Tabela de particoes propria: 4 MB para a app em vez dos ~2 MB do padrao.
+# O caminho do partitions.csv vem do mpconfigboard.cmake: o ESP-IDF resolve
+# caminhos relativos a partir de ports/esp32 do MicroPython, nao deste board.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+
+# --- Camera MIPI-CSI ---
+#
+# Sem o driver do sensor compilado, esp_video_init() nao encontra nada, nao
+# registra o dispositivo V4L2, e o open() de /dev/video0 falha -- que foi
+# exatamente o sintoma aqui, com o sensor respondendo no SCCB mas sem device.
+#
+# Valores alinhados com odudex/Kern, sdkconfig.defaults, que sao os validados
+# nas placas Waveshare P4.
+CONFIG_CAMERA_OV5647=y
+CONFIG_CAMERA_OV5647_MIPI_RAW8_800X800_50FPS=n
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
+CONFIG_CAMERA_OV5647_MIPI_DEFAULT_FMT_RAW10_1280X960_BINNING_45FPS=y
+
+# A 4.3 vem com OV5647, mas placas irmas trazem SC2336 e o probe cobre as duas.
+CONFIG_CAMERA_SC2336=y
+CONFIG_CAMERA_SC2336_MIPI_RAW10_1280X720_30FPS=y
+CONFIG_CAMERA_SC2336_MIPI_DEFAULT_FMT_RAW10_1280X720_30FPS=y
+
+# So usamos MIPI-CSI. O driver DVP vem ligado por padrao no P4 (LCDCAM) e nao
+# tem uso aqui.
+CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n
+
+# --- Cache L2 ---
+#
+# Igual ao Kern na mesma placa. Medido aqui: so pintar o fundo de 480x800 na
+# PSRAM levava 10 ms, mais da metade do custo de um quadro inteiro, e o gargalo
+# era a escrita na PSRAM atraves da cache, nao o desenho em si. Linhas de 128 B
+# fazem rajadas maiores no barramento; os 128 KB a mais saem da SRAM interna,
+# que tinha ~470 KB livres.
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
