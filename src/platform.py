@@ -33,6 +33,14 @@ if not simulator:
         # Sem acesso a registradores do STM32 aqui; as funcoes que dependiam
         # disso tem ramo proprio mais abaixo.
         stm = None
+        # MicroPython brings the native USB port up with its REPL on it. Turn it
+        # off before any screen is shown: otherwise anyone plugging the board
+        # into a computer while it waits for the PIN gets a Python console. The
+        # Specter USB port is enabled later, from the USB host settings.
+        try:
+            pyb.usb_mode(None)
+        except Exception as e:
+            print("usb:", e)
     else:
         import stm
 else:
@@ -444,9 +452,9 @@ def usb_connected():
     if simulator:
         return True
     if esp32:
-        # Esta placa expoe o console por uma ponte CH343 e o port nao usa USB
-        # nativo, entao nao ha linha de VBUS para consultar.
-        return False
+        # No VBUS line reaches the P4 on this board; the native USB port counts
+        # as connected once a host has configured the Specter serial port.
+        return pyb.USB_VCP().isconnected()
     return bool(pyb.Pin.board.USB_VBUS.value())
 
 BATTERY_TABLE = [

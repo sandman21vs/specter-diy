@@ -23,6 +23,7 @@ Consulte `stub_report()` para saber o que foi exercitado sem hardware real.
 """
 
 import machine
+import time
 from micropython import const
 
 _warned = set()
@@ -281,42 +282,153 @@ class LED:
 # ------------------------------------------------------------ USB_VCP --------
 
 
+# ---------------------------------------------------------------- USB --------
+#
+# O Specter fala com o Specter Desktop e o HWI por uma porta serial USB. Aqui
+# ela e uma interface CDC no USB nativo do P4 (o conector USB-C "USB"/OTG),
+# criada com machine.USBDevice e o pacote usb-device-cdc do micropython-lib.
+#
+# O REPL continua na ponte CH343 (conector "UART"). builtin_driver=False tira o
+# CDC de REPL do USB nativo, entao a porta do Specter carrega so o protocolo
+# dele: um byte 0x03 vindo do host nao vira Ctrl-C, e o USB nao abre um console
+# para quem plugar a placa num computador.
+
+# VID do MicroPython e o PID de CDC do pyboard, os mesmos do Specter no STM32:
+# o HWI e o Specter Desktop procuram portas com VID F055.
+_USB_VID = 0xF055
+_USB_PID = 0x9800
+# Quanto um write() pode esperar o host ler antes de desistir.
+_USB_WRITE_TIMEOUT_MS = 2000
+_MP_STREAM_POLL = 3
+_MP_STREAM_POLL_RD = 1
+
+_usb_cdc = None
+_usb_mode = None
+
+
+# O conector USB da placa vai ao PHY high-speed do P4, e em high speed um
+# endpoint bulk tem de ter 512 bytes. O usb-device-cdc do micropython-lib fixa 64
+# (o tamanho de full speed); com isso o macOS recusa a configuracao e nunca cria
+# a porta serial. Forcar o controlador a full speed trava o boot do MicroPython,
+# entao a interface abaixo anuncia e le em blocos de 512.
+_USB_BULK_HS = 512
+
+
+def _cdc():
+    global _usb_cdc
+    if _usb_cdc is None:
+        from usb.device.cdc import CDCInterface
+
+        class _HighSpeedDescriptor:
+            # Repassa tudo ao descritor real, trocando so o tamanho dos bulk.
+            def __init__(self, desc):
+                self._desc = desc
+
+            def endpoint(self, address, attributes, max_packet, interval=1):
+                if attributes == "bulk":
+                    max_packet = _USB_BULK_HS
+                return self._desc.endpoint(address, attributes, max_packet, interval)
+
+            def __getattr__(self, name):
+                return getattr(self._desc, name)
+
+        class _HighSpeedCDC(CDCInterface):
+            def desc_cfg(self, desc, itf_num, ep_num, strs):
+                super().desc_cfg(_HighSpeedDescriptor(desc), itf_num, ep_num, strs)
+
+            def _rd_xfer(self):
+                # Mesmo que o original, com o buffer de um pacote high-speed:
+                # um OUT de ate 512 bytes nao cabe nos 64 do original.
+                if (
+                    self.is_open()
+                    and not self.xfer_pending(self.ep_d_out)
+                    and self._rb.writable() >= _USB_BULK_HS
+                ):
+                    self.submit_xfer(
+                        self.ep_d_out, self._rb.pend_write(_USB_BULK_HS), self._rd_cb
+                    )
+
+        # timeout=0: read() devolve o que ja chegou, sem bloquear o loop do app.
+        _usb_cdc = _HighSpeedCDC(timeout=0, txbuf=2048, rxbuf=2048)
+    return _usb_cdc
+
+
 class USB_VCP:
     RTS = const(1)
     CTS = const(2)
 
     def __init__(self, *args, **kwargs):
-        _warn_stub("USB_VCP")
+        pass
 
     def init(self, *args, **kwargs):
+        # Controle de fluxo RTS/CTS e coisa do UART do STM32; o CDC sobre USB
+        # ja tem o proprio controle de fluxo no nivel dos endpoints.
         pass
 
     def isconnected(self):
-        return False
+        return _usb_cdc is not None and _usb_mode is not None and _usb_cdc.is_open()
 
     def any(self):
-        return False
+        if not self.isconnected():
+            return 0
+        return 1 if _usb_cdc.ioctl(_MP_STREAM_POLL, _MP_STREAM_POLL_RD) else 0
 
-    def read(self, *args):
-        return None
+    def read(self, nbytes=-1):
+        if not self.isconnected():
+            return None
+        return _usb_cdc.read(nbytes)
 
     def readline(self):
-        return None
+        return self.read()
 
     def write(self, data):
-        return len(data)
-
-
-_usb_mode = None
+        if isinstance(data, str):
+            data = data.encode()
+        if not self.isconnected():
+            return len(data)
+        # Com timeout=0 o CDC escreve so o que cabe no buffer; o Specter espera
+        # que o write entregue tudo, entao repetimos ate o host ler.
+        mv = memoryview(data)
+        sent = 0
+        start = time.ticks_ms()
+        while sent < len(data):
+            n = _usb_cdc.write(mv[sent:])
+            sent += n or 0
+            if sent < len(data):
+                if time.ticks_diff(time.ticks_ms(), start) > _USB_WRITE_TIMEOUT_MS:
+                    break
+                machine.idle()
+        return sent
 
 
 def usb_mode(*args):
-    """Sem USB nativo: o REPL chega pela ponte CH343."""
+    """'VCP' liga a porta serial USB do Specter; None desliga o USB nativo."""
     global _usb_mode
     if not args:
         return _usb_mode
-    _usb_mode = args[0]
-    _warn_stub("usb_mode")
+    mode = args[0]
+    import usb.device
+
+    device = usb.device.get()
+    # "Desligado" nao pode ser device.active(False): com o runtime inativo o
+    # MicroPython volta ao CDC embutido, que e o REPL. Desligar e ativar o
+    # runtime sem o driver embutido e sem nenhuma interface.
+    interfaces = (_cdc(),) if mode and "VCP" in mode else ()
+    device.init(
+        *interfaces,
+        builtin_driver=False,
+        id_vendor=_USB_VID,
+        id_product=_USB_PID,
+        manufacturer_str="Specter-DIY",
+        product_str="Specter-DIY ESP32-P4",
+        # The CDC function is an Interface Association; announce it the way
+        # MicroPython's built-in CDC does (Misc / Common / IAD) so hosts
+        # bind both of its interfaces as one serial port.
+        device_class=0xEF,
+        device_subclass=2,
+        device_protocol=1,
+    )
+    _usb_mode = mode
 
 
 # ------------------------------------------------------------- SDCard --------
