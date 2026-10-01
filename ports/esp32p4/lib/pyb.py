@@ -325,38 +325,52 @@ def usb_mode(*args):
 class SDCard:
     """microSD por SDMMC.
 
-    Pinos D0-D3/CLK/CMD em GPIO 39-44, do board_config do bootloader. O slot
-    responde ali -- verificado sondando sem cartao, que chegou ao send_op_cond
-    e expirou como esperado. Leitura e escrita com cartao presente ainda nao
-    foram exercitadas.
+    Pinos D0-D3/CLK/CMD em GPIO 39-44, do board_config do bootloader.
+    Verificado com um cartao de 2 GB: deteccao, montagem FAT, leitura e
+    escrita.
     """
 
     def __init__(self, slot=0, width=4):
         self._slot = slot
         self._width = width
         self._sd = None
+        self._probe = bytearray(512)
 
     def _open(self):
         if self._sd is None:
             self._sd = machine.SDCard(slot=self._slot, width=self._width)
         return self._sd
 
-    def present(self):
-        try:
-            self._open().info()
-            return True
-        except Exception:
-            self._sd = None
-            return False
-
-    def power(self, state):
-        if not state and self._sd is not None:
+    def _close(self):
+        # machine.SDCard segura o LDO on-chip que alimenta o slot (canal 4)
+        # desde o construtor e so o devolve no deinit(). Largar o objeto sem
+        # deinit() deixava o LDO preso ate o GC passar, e o proximo SDCard()
+        # falhava com "esp_ldo_acquire_channel: already in use" -- o cartao so
+        # voltava reiniciando a placa.
+        if self._sd is not None:
             try:
                 self._sd.deinit()
             except Exception:
                 pass
             self._sd = None
-        elif state:
+
+    def present(self):
+        # Sem pino de card-detect nesta placa: presenca e "o cartao responde".
+        # info() responde de cache depois da primeira inicializacao, entao
+        # sozinho nao percebe um cartao removido; ler o bloco 0 percebe.
+        try:
+            sd = self._open()
+            sd.info()
+            sd.readblocks(0, self._probe)
+            return True
+        except Exception:
+            self._close()
+            return False
+
+    def power(self, state):
+        if not state:
+            self._close()
+        else:
             self._open()
 
     # Protocolo de block device SIMPLES, para os.mount().
