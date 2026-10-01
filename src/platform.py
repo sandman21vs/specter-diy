@@ -457,7 +457,57 @@ BATTERY_TABLE = [
     (3.6,  0),
 ]
 
+def _battery_level(voltage):
+    level = 0
+    for i, (v, lvl) in enumerate(BATTERY_TABLE):
+        if voltage > v:
+            # max voltage
+            if i == 0:
+                level = lvl
+                break
+            # linear interpolation
+            prevV, prevLvl = BATTERY_TABLE[i-1]
+            level = int(lvl + (prevLvl-lvl)*(voltage-v)/(prevV-v))
+            break
+    return level
+
+
+# Waveshare ESP32-P4 4.3-C: BAT --[200k]-- BAT_ADC --[100k]-- GND on GPIO20
+# (ADC1 channel 4), as read by Kern's bsp_common/pmic_adc.c on the same board.
+_BAT_ADC_PIN = 20
+_BAT_DIVIDER = 3
+# The divider node is noisy; Kern averages 16 samples too.
+_BAT_SAMPLES = 16
+# Below this the pin is not following a Li-ion cell: no battery connected.
+_BAT_MIN_VOLTAGE = 2.5
+_bat_adc = None
+
+
+def _esp32_battery_status():
+    global _bat_adc
+    try:
+        if _bat_adc is None:
+            import machine
+            # 11 dB is the widest range (MicroPython maps it to the P4's 12 dB);
+            # a full 4.2 V cell puts 1.4 V on the pin.
+            _bat_adc = machine.ADC(machine.Pin(_BAT_ADC_PIN), atten=machine.ADC.ATTN_11DB)
+        total = 0
+        for _ in range(_BAT_SAMPLES):
+            total += _bat_adc.read_uv()
+        voltage = total / _BAT_SAMPLES * _BAT_DIVIDER / 1e6
+    except Exception as e:
+        print("battery:", e)
+        return None, None
+    if voltage < _BAT_MIN_VOLTAGE:
+        return None, None
+    # No charger status or VBUS sense is wired to the P4 on this board, so
+    # whether it is charging is unknown.
+    return _battery_level(voltage), None
+
+
 def get_battery_status():
+    if esp32:
+        return _esp32_battery_status()
     # simulator or no i2c
     if i2c is None:
         return None, None
