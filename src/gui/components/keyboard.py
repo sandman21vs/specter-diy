@@ -82,7 +82,8 @@ class HintKeyboard(ButtonMatrix):
         self.hint_lbl = lv.label(self.hint)
         self.hint_lbl.set_text(" ")
         self.hint_lbl.add_style(styles["title"], 0)
-        self.hint_lbl.set_size(50, 60)
+        self.hint_lbl.set_width(50)
+        self.hint_lbl.set_style_text_align(lv.TEXT_ALIGN.CENTER, 0)
         self.hint.add_flag(lv.obj.FLAG.HIDDEN)
 
     def _hide_hint(self):

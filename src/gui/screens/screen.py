@@ -62,7 +62,10 @@ class Screen(lv.obj):
                     title="Processing..."):
         if self.mbox is None:
             self.mbox = Modal(self)
-        self.mbox.set_text("\n\n"+title+"\n\n"+text+"\n\n")
+        # The modal supplies its own padding and sizes itself after LVGL has
+        # laid out the wrapped label. Keep the title and message separated,
+        # without adding empty lines that distort the measured height.
+        self.mbox.set_text(title + "\n\n" + text)
         # trigger update of the screen
         update()
         update()

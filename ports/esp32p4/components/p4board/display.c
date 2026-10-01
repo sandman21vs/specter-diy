@@ -22,20 +22,25 @@
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "board_config.h"
 #include "driver/ledc.h"
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_ldo_regulator.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "p4board.h"
 
 #define ARRAY_SIZE(values) (sizeof(values) / sizeof((values)[0]))
 #define BACKLIGHT_DUTY_MAX 1023U
+#define DISPLAY_EVENT_TIMEOUT_MS 100U
 
 typedef struct st7701_init_command {
   uint8_t command;
@@ -119,9 +124,42 @@ static esp_ldo_channel_handle_t dsi_ldo;
 static esp_lcd_dsi_bus_handle_t dsi_bus;
 static esp_lcd_panel_io_handle_t panel_io;
 static esp_lcd_panel_handle_t dpi_panel;
-static uint16_t *lcd_framebuffer;
+static uint16_t *lcd_framebuffers[2];
+static uint16_t *drawing_framebuffer;
+static SemaphoreHandle_t frame_complete_semaphore;
+static uint8_t displayed_framebuffer;
+static bool framebuffer_state_known;
+static bool lvgl_owns_framebuffers;
+static bool display_timeout_reported;
 static bool backlight_timer_initialized;
 static bool backlight_channel_initialized;
+
+/* These callbacks run from the MIPI-DSI bridge ISR. They only wake the task
+ * that is waiting for a safe frame boundary; LVGL is called from its normal
+ * MicroPython update task, never from interrupt context. */
+static bool IRAM_ATTR display_on_frame_complete(esp_lcd_panel_handle_t panel,
+    esp_lcd_dpi_panel_event_data_t *event_data, void *user_ctx) {
+    (void)panel;
+    (void)event_data;
+    (void)user_ctx;
+    BaseType_t task_woken = pdFALSE;
+    if (frame_complete_semaphore) {
+        xSemaphoreGiveFromISR(frame_complete_semaphore, &task_woken);
+    }
+    return task_woken == pdTRUE;
+}
+
+static esp_err_t wait_for_display_event(SemaphoreHandle_t semaphore,
+    const char *event_name) {
+    if (xSemaphoreTake(semaphore, pdMS_TO_TICKS(DISPLAY_EVENT_TIMEOUT_MS)) != pdTRUE) {
+        if (!display_timeout_reported) {
+            ESP_LOGW(TAG, "timed out waiting for display %s", event_name);
+            display_timeout_reported = true;
+        }
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
 
 esp_err_t p4board_backlight(uint32_t percent) {
     if (percent > 100U) {
@@ -204,6 +242,7 @@ esp_err_t p4board_display_init(void) {
     if (dpi_panel) {
         return ESP_OK;
     }
+    display_timeout_reported = false;
     esp_err_t result = init_backlight();
     if (result == ESP_OK) {
         result = p4board_backlight(0);
@@ -244,7 +283,7 @@ esp_err_t p4board_display_init(void) {
         .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
         .dpi_clock_freq_mhz = P4BOARD_LCD_DPI_CLOCK_MHZ,
         .in_color_format = LCD_COLOR_FMT_RGB565,
-        .num_fbs = 1,
+        .num_fbs = 2,
         .video_timing = {
             .h_size = P4BOARD_LCD_WIDTH,
             .v_size = P4BOARD_LCD_HEIGHT,
@@ -255,19 +294,46 @@ esp_err_t p4board_display_init(void) {
             .vsync_pulse_width = P4BOARD_LCD_VSYNC_PULSE_WIDTH,
             .vsync_front_porch = P4BOARD_LCD_VSYNC_FRONT_PORCH,
         },
-        .flags.use_dma2d = true,
+        /* LVGL and the panel share the two scanout buffers directly. No
+         * framebuffer-copy engine is needed for this path. */
+        .flags.use_dma2d = false,
     };
+
+    /* Keep frame completions as a count: two DMA completions may arrive
+     * before the waiting task runs, and both are needed for a safe handoff. */
+    frame_complete_semaphore = xSemaphoreCreateCounting(UINT32_MAX, 0);
+    if (!frame_complete_semaphore) {
+        result = ESP_ERR_NO_MEM;
+        goto fail;
+    }
+
     if ((result = esp_lcd_new_panel_dpi(dsi_bus, &panel_config, &dpi_panel)) != ESP_OK) {
         goto fail;
     }
 
+    const esp_lcd_dpi_panel_event_callbacks_t display_callbacks = {
+        .on_frame_buf_complete = display_on_frame_complete,
+    };
+    if ((result = esp_lcd_dpi_panel_register_event_callbacks(dpi_panel,
+        &display_callbacks, NULL)) != ESP_OK) {
+        goto fail;
+    }
+
+    void *framebuffer0 = NULL;
+    void *framebuffer1 = NULL;
     if ((result = reset_lcd()) != ESP_OK ||
         (result = send_st7701_init()) != ESP_OK ||
         (result = esp_lcd_panel_init(dpi_panel)) != ESP_OK ||
-        (result = esp_lcd_dpi_panel_get_frame_buffer(dpi_panel, 1,
-            (void **)&lcd_framebuffer, (void **)NULL)) != ESP_OK) {
+        (result = esp_lcd_dpi_panel_get_frame_buffer(dpi_panel, 2,
+            &framebuffer0, &framebuffer1)) != ESP_OK) {
         goto fail;
     }
+
+    lcd_framebuffers[0] = framebuffer0;
+    lcd_framebuffers[1] = framebuffer1;
+    displayed_framebuffer = 0;
+    framebuffer_state_known = true;
+    lvgl_owns_framebuffers = false;
 
     ESP_LOGI(TAG, "ST7701 %ux%u active: DSI=%u lanes at %u Mbps, LDO=%d/%d mV",
         P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT, P4BOARD_LCD_DSI_LANES,
@@ -301,7 +367,15 @@ void p4board_display_deinit(void) {
     if (dpi_panel) {
         esp_lcd_panel_del(dpi_panel);
         dpi_panel = NULL;
-        lcd_framebuffer = NULL;
+    }
+    lcd_framebuffers[0] = NULL;
+    lcd_framebuffers[1] = NULL;
+    displayed_framebuffer = 0;
+    framebuffer_state_known = false;
+    lvgl_owns_framebuffers = false;
+    if (drawing_framebuffer) {
+        heap_caps_free(drawing_framebuffer);
+        drawing_framebuffer = NULL;
     }
     if (panel_io) {
         esp_lcd_panel_io_del(panel_io);
@@ -315,11 +389,89 @@ void p4board_display_deinit(void) {
         esp_ldo_release_channel(dsi_ldo);
         dsi_ldo = NULL;
     }
+    if (frame_complete_semaphore) {
+        vSemaphoreDelete(frame_complete_semaphore);
+        frame_complete_semaphore = NULL;
+    }
     gpio_reset_pin(P4BOARD_LCD_RESET_GPIO);
 }
 
 uint16_t *p4board_framebuffer(void) {
-    return lcd_framebuffer;
+    /* The public MicroPython framebuffer is off-screen. The LVGL renderer uses
+     * the two panel-owned buffers through p4board_framebuffers(). Allocate
+     * this compatibility buffer only when a caller requests it, so the normal
+     * LVGL UI does not reserve an unused third frame in PSRAM. */
+    if (!dpi_panel) {
+        return NULL;
+    }
+    if (!drawing_framebuffer) {
+        drawing_framebuffer = heap_caps_calloc(1,
+            (size_t)P4BOARD_LCD_WIDTH * P4BOARD_LCD_HEIGHT * sizeof(uint16_t),
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    return drawing_framebuffer;
+}
+
+esp_err_t p4board_framebuffers(uint16_t **fb0, uint16_t **fb1) {
+    if (!fb0 || !fb1) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!dpi_panel || !lcd_framebuffers[0] || !lcd_framebuffers[1]) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    *fb0 = lcd_framebuffers[0];
+    *fb1 = lcd_framebuffers[1];
+    /* LVGL owns both buffers until display deinit. Legacy flush must not
+     * change its scanout selection or overwrite its next render target. */
+    lvgl_owns_framebuffers = true;
+    return ESP_OK;
+}
+
+esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer) {
+    if (!dpi_panel || !framebuffer || !frame_complete_semaphore) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!framebuffer_state_known) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint8_t framebuffer_index;
+    if (framebuffer == lcd_framebuffers[0]) {
+        framebuffer_index = 0;
+    } else if (framebuffer == lcd_framebuffers[1]) {
+        framebuffer_index = 1;
+    } else {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Start from a clean event count. Any completion posted after this point
+     * is retained individually, even if multiple frames finish before the
+     * task wakes up. */
+    while (xSemaphoreTake(frame_complete_semaphore, 0) == pdTRUE) {
+    }
+
+    /* Once a switch is requested, neither the requested buffer nor the prior
+     * scanout buffer is safe to infer after an error or timeout. */
+    framebuffer_state_known = false;
+    esp_err_t result = esp_lcd_panel_draw_bitmap(dpi_panel, 0, 0,
+        P4BOARD_LCD_WIDTH, P4BOARD_LCD_HEIGHT, framebuffer);
+    if (result != ESP_OK) {
+        return result;
+    }
+    /* The IDF ISR snapshots cur_fb_index before restarting DMA. An ISR already
+     * in flight may report the old selection, so wait for both the selection
+     * boundary and the following completion before reusing the previous
+     * scanout buffer. */
+    result = wait_for_display_event(frame_complete_semaphore, "frame selection");
+    if (result == ESP_OK) {
+        result = wait_for_display_event(frame_complete_semaphore,
+            "frame-buffer completion");
+    }
+    if (result == ESP_OK) {
+        displayed_framebuffer = framebuffer_index;
+        framebuffer_state_known = true;
+    }
+    return result;
 }
 
 esp_err_t p4board_display_enabled(bool enabled) {
@@ -331,12 +483,27 @@ esp_err_t p4board_display_enabled(bool enabled) {
 }
 
 esp_err_t p4board_flush(uint16_t y, uint16_t height) {
-    if (!dpi_panel || !lcd_framebuffer) {
+    if (lvgl_owns_framebuffers) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!dpi_panel || !drawing_framebuffer || !lcd_framebuffers[0] || !lcd_framebuffers[1]) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* A timed-out present may already have switched the panel. Do not derive
+     * a writable back buffer from a stale displayed_framebuffer value. */
+    if (!framebuffer_state_known) {
         return ESP_ERR_INVALID_STATE;
     }
     if (y >= P4BOARD_LCD_HEIGHT || height > P4BOARD_LCD_HEIGHT - y) {
         return ESP_ERR_INVALID_ARG;
     }
-    return esp_lcd_panel_draw_bitmap(dpi_panel, 0, y, P4BOARD_LCD_WIDTH,
-        y + height, lcd_framebuffer);
+    /* Keep the legacy framebuffer API tear-free too. The caller's off-screen
+     * image is copied to the buffer that is not being scanned, then presented
+     * as one complete frame so both panel buffers stay consistent. */
+    uint8_t next_framebuffer = displayed_framebuffer ^ 1u;
+    size_t framebuffer_size = (size_t)P4BOARD_LCD_WIDTH * P4BOARD_LCD_HEIGHT
+        * sizeof(uint16_t);
+    memcpy(lcd_framebuffers[next_framebuffer], drawing_framebuffer,
+        framebuffer_size);
+    return p4board_present_framebuffer(lcd_framebuffers[next_framebuffer]);
 }
