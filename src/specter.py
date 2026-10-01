@@ -16,6 +16,7 @@ from platform import (
     get_firmware_boot_mode,
     get_flash_read_protection_status,
     get_flash_write_protection_status,
+    esp32,
 )
 from hosts import Host, HostError
 from app import BaseApp
@@ -115,8 +116,9 @@ class Specter:
     def start(self):
         # register battery monitor (runs every 3 seconds)
         self.gui.set_battery_callback(get_battery_status, 3000)
-        # start the GUI
-        self.gui.start()
+        # start the GUI. On the ESP32-P4 LVGL only redraws what changed and keeps
+        # real time, so a shorter period gives smoother animations at no cost.
+        self.gui.start(rate=15 if esp32 else 30)
         # register coroutines for all hosts
         for host in self.hosts:
             host.start(self)

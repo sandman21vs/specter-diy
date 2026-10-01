@@ -735,6 +735,10 @@ class QRHost(Host):
             self.set_setting(SCAN_ADDR, enable)
 
     def _stop_scanner(self):
+        if getattr(self.uart, "is_camera", False):
+            # Sem comandos seriais para a camera: esperar a "resposta" faria uma
+            # captura completa por tentativa e travaria a interface.
+            return
         if self.trigger is not None:
             self.trigger.on()  # trigger is reversed, so on means disable
         else:
@@ -742,12 +746,18 @@ class QRHost(Host):
 
     def _start_scanner(self):
         self.clean_uart()
+        if getattr(self.uart, "is_camera", False):
+            # A camera nao tem gatilho nem comando de inicio, e um QR no campo de
+            # visao seria lido como a resposta do scanner e descartado.
+            return
         if self.trigger is not None:
             self.trigger.off()
         else:
             self._start_scan(1)
 
     async def _restart_scanner(self):
+        if getattr(self.uart, "is_camera", False):
+            return
         # fix scanner race condition
         time.sleep_ms(RETRY_DELAY_MS)
         if self.trigger is not None:
@@ -1070,9 +1080,11 @@ class QRHost(Host):
         delete_recursively(self.path)
         if self.manager is not None:
             # pass self so user can abort
-            await self.manager.gui.show_progress(
-                self, "Scanning...", "Point scanner to the QR code"
-            )
+            if getattr(self.uart, "is_camera", False):
+                message = "Point the camera at the QR code"
+            else:
+                message = "Point scanner to the QR code"
+            await self.manager.gui.show_progress(self, "Scanning...", message)
         stream = await self.scan(raw=raw, chunk_timeout=chunk_timeout)
         # Wait for progress popup to close before returning
         if self.manager is not None:

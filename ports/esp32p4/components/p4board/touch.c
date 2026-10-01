@@ -162,9 +162,12 @@ esp_err_t p4board_touch_read(p4board_touch_point_t *points, uint8_t capacity,
         return ESP_ERR_INVALID_RESPONSE;
     }
     /* Bit 7 is the "coordinates ready" flag; the low nibble is the point
-     * count. Nothing to do until the controller raises it. */
+     * count. Without it the controller simply has not finished its next scan
+     * -- that says nothing about the finger, so it must not be reported as
+     * "zero points". Treating it as a release splits one touch into
+     * press-release-press, which LVGL counts as a double click. */
     if (!(status & 0x80U)) {
-        return ESP_OK;
+        return ESP_ERR_NOT_FINISHED;
     }
     uint8_t available = status & 0x0fU;
     if (available > P4BOARD_TOUCH_MAX_POINTS) {

@@ -9,7 +9,7 @@ usar micropython.schedule() para tirar o trabalho de dentro da interrupcao e
 mantido -- lv_task_handler() aloca memoria e nao pode rodar num contexto de IRQ.
 """
 
-from udisplay import backlight, off, on, set_rotation, update
+from udisplay import backlight, image_changed, image_rgb565, off, on, set_rotation, stats, update
 
 _timer = None
 

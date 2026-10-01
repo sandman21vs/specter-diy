@@ -19,6 +19,10 @@ esp_err_t p4board_display_enabled(bool enabled);
 uint16_t *p4board_framebuffer(void);
 esp_err_t p4board_framebuffers(uint16_t **fb0, uint16_t **fb1);
 esp_err_t p4board_present_framebuffer(const uint16_t *framebuffer);
+/* Assincrono: begin pede a troca e volta; finish espera ate o buffer anterior
+ * sair do scanout. Entre os dois, o buffer anterior NAO pode ser escrito. */
+esp_err_t p4board_present_begin(const uint16_t *framebuffer);
+esp_err_t p4board_present_finish(void);
 esp_err_t p4board_flush(uint16_t y, uint16_t height);
 
 /* Touch */

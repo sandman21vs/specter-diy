@@ -86,7 +86,10 @@
 #if LV_USE_SDL
     #define LV_DEF_REFR_PERIOD  16      /*[ms]*/
 #else
-    #define LV_DEF_REFR_PERIOD  30      /*[ms]*/
+    /* 15 ms como o Kern na mesma placa. So redesenha o que mudou (modo DIRECT)
+     * e a troca de buffer nao bloqueia, entao o custo de um quadro parado e
+     * desprezivel. */
+    #define LV_DEF_REFR_PERIOD  15      /*[ms]*/
 #endif
 
 /*Default Dot Per Inch. Used to initialize default sizes such as widgets sized, style paddings.
@@ -446,7 +449,7 @@ extern void mp_lv_deinit_gc();
 #define LV_FONT_MONTSERRAT_20 0
 #define LV_FONT_MONTSERRAT_22 1
 #define LV_FONT_MONTSERRAT_24 0
-#define LV_FONT_MONTSERRAT_26 0
+#define LV_FONT_MONTSERRAT_26 1  /* teclado do PIN, no lugar da 28 escalada */
 #define LV_FONT_MONTSERRAT_28 1
 #define LV_FONT_MONTSERRAT_30 0
 #define LV_FONT_MONTSERRAT_32 0

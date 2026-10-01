@@ -251,8 +251,11 @@ class PinScreen(Screen):
         btnm.add_style(styles["btnm"], lv.PART.ITEMS)
         # Keep pressed and released states visually identical to avoid sidechannels.
         btnm.add_style(styles["btnm_pressed"], lv.PART.ITEMS | lv.STATE.PRESSED)
-        btnm.set_style_text_font(lv.font_montserrat_28, lv.PART.ITEMS)
-        btnm.set_style_transform_scale(FONT_SCALE_MINUS_TWO_PT, lv.PART.ITEMS)
+        if PIN_KEYPAD_FONT is not None:
+            btnm.set_style_text_font(PIN_KEYPAD_FONT, lv.PART.ITEMS)
+        else:
+            btnm.set_style_text_font(lv.font_montserrat_28, lv.PART.ITEMS)
+            btnm.set_style_transform_scale(FONT_SCALE_MINUS_TWO_PT, lv.PART.ITEMS)
 
         self.pin = lv.textarea(self)
         self.pin.set_text("")
