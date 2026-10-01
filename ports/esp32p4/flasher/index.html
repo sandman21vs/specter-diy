@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    Adapted from the Kern Web Flasher (https://github.com/odudex/Kern, site/flash),
+    MIT License, Copyright (c) 2025 Kern Contributors. See NOTICE.md.
+  -->
+  <title>Specter-DIY ESP32-P4 Flasher (experimental)</title>
+  <meta name="description" content="Flash Specter-DIY development builds to the Waveshare ESP32-P4 4.3-inch board from the browser.">
+  <style>
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --accent:  #f7931a;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --success: #3fb950;
+      --error:   #f85149;
+      --warn:    #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+    .container { width: 100%; max-width: 720px; }
+
+    header { text-align: center; margin-bottom: 2rem; }
+    header h1 { font-size: 1.5rem; font-weight: 700; }
+    header p  { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .card-title {
+      font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted); margin-bottom: 1rem;
+    }
+
+    .banner {
+      border-radius: 6px; padding: 0.75rem 1rem;
+      font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.45;
+    }
+    .banner-error { background: rgba(248,81,73,0.1);   border: 1px solid var(--error); color: var(--error); display: none; }
+
+    .fork-alert {
+      border: 2px solid var(--error); border-radius: 8px; padding: 0.5rem; margin-bottom: 1rem;
+      background: repeating-linear-gradient(-45deg,
+        rgba(248,81,73,0.14) 0, rgba(248,81,73,0.14) 12px,
+        rgba(248,81,73,0.06) 12px, rgba(248,81,73,0.06) 24px);
+    }
+    .fork-alert .inner { background: var(--bg); border-radius: 5px; padding: 1.25rem 1.4rem; }
+    .fork-alert h2 { color: var(--error); font-size: 1.15rem; margin-bottom: 0.75rem; }
+    .fork-alert p, .fork-alert li { font-size: 0.875rem; line-height: 1.5; }
+    .fork-alert p { margin-bottom: 0.6rem; }
+    .fork-alert ul { padding-left: 1.2rem; margin-bottom: 0.75rem; }
+    .fork-alert li { margin-bottom: 0.3rem; }
+    .fork-alert a { color: var(--accent); }
+    .fork-alert .official { color: var(--muted); font-size: 0.85rem; margin: 0; }
+
+    .ack {
+      display: flex; gap: 0.6rem; align-items: flex-start;
+      font-size: 0.875rem; color: var(--text); margin-bottom: 1rem; cursor: pointer;
+    }
+    .ack input { margin-top: 0.2rem; accent-color: var(--error); width: 1rem; height: 1rem; flex: 0 0 auto; }
+
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .tab {
+      flex: 1; padding: 0.5rem; border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      border-radius: 6px; cursor: pointer; font-size: 0.875rem; font-weight: 500;
+      transition: all 0.15s;
+    }
+    .tab.active { border-color: var(--accent); color: var(--accent); background: rgba(247,147,26,0.08); }
+
+    .board { font-size: 0.9rem; margin-bottom: 0.25rem; }
+    .release { font-size: 0.85rem; color: var(--muted); }
+    .release a { color: var(--accent); }
+
+    .file-list { margin-top: 1rem; }
+    .file-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.45rem 0; border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .file-item:last-child { border-bottom: none; }
+    .file-item .name { color: var(--text); font-family: monospace; }
+    .file-item .addr { color: var(--accent); font-family: monospace; font-size: 0.8rem; }
+    .file-item .size { color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem; }
+
+    .drop-zone {
+      border: 2px dashed var(--border); border-radius: 8px;
+      padding: 2rem 1.5rem; text-align: center; cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); color: var(--text); }
+    .drop-zone input { display: none; }
+    .zip-name { margin-top: 0.5rem; color: var(--success); font-size: 0.85rem; }
+
+    .actions { display: flex; gap: 0.75rem; }
+    .btn {
+      flex: 1; padding: 0.7rem 1.25rem;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-connect { background: var(--bg); color: var(--text); }
+    .btn-connect:hover:not(:disabled) { border-color: var(--text); }
+    .btn-connect.connected { border-color: var(--success); color: var(--success); }
+    .btn-flash  { background: var(--accent); color: #111; border-color: var(--accent); }
+    .btn-flash:hover:not(:disabled) { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .progress-wrap { margin-top: 1rem; display: none; }
+    .progress-wrap.visible { display: block; }
+    .progress-bg   { background: var(--border); border-radius: 4px; height: 8px; overflow: hidden; }
+    .progress-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.2s; }
+    .progress-lbl  { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; text-align: right; }
+
+    .console {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.75rem 1rem; height: 220px; overflow-y: auto;
+      font-family: monospace; font-size: 0.8rem; margin-top: 1rem;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .l-info { color: var(--muted); }
+    .l-ok   { color: var(--success); }
+    .l-err  { color: var(--error); }
+
+    ol.steps { padding-left: 1.2rem; font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
+    ol.steps strong { color: var(--text); }
+
+    footer { margin-top: 2rem; font-size: 0.8rem; color: var(--muted); text-align: center; line-height: 1.6; }
+    footer a { color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Specter-DIY ESP32-P4 Flasher</h1>
+    <p>Experimental builds of an unofficial port, flashed from the browser</p>
+  </header>
+
+  <div class="banner banner-error" id="compatBanner">
+    ⚠ Your browser does not support the Web Serial API.
+    Please use <strong>Google Chrome</strong>, <strong>Microsoft Edge</strong> or <strong>Brave</strong> on a desktop computer.
+  </div>
+
+  <div class="fork-alert" role="alert">
+    <div class="inner">
+      <h2>⚠ Unofficial port, not official Specter-DIY</h2>
+      <p>
+        This flasher writes firmware from
+        <a href="https://github.com/sandman21vs/specter-diy/tree/esp32-p4-port" target="_blank" rel="noopener">sandman21vs/specter-diy</a>,
+        an unofficial fork that runs Specter-DIY on the <strong>Waveshare ESP32-P4 4.3" board</strong>.
+      </p>
+      <ul>
+        <li><strong>Do not use it with real seeds or real funds.</strong> Testnet and throwaway keys only.</li>
+        <li>Not reviewed or endorsed by the Specter-DIY maintainers, never audited, and tested on one board.</li>
+        <li>Secure boot and flash encryption are not enabled: anyone with physical access to the board can read or replace what is on it.</li>
+        <li>Flashing <strong>wipes everything stored on the device</strong>. Builds are development snapshots and may misbehave.</li>
+        <li>No warranty and no support. Report problems to this fork, not to upstream Specter-DIY.</li>
+      </ul>
+      <p class="official">
+        Want the real thing? Use the
+        <a href="https://github.com/cryptoadvance/specter-diy" target="_blank" rel="noopener">official Specter-DIY</a>
+        on its supported hardware.
+      </p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">How to flash</div>
+    <ol class="steps">
+      <li>Plug the board into its <strong>UART</strong> USB-C port with a data cable.</li>
+      <li>Pick the firmware below (the latest release is selected).</li>
+      <li>Click <strong>Connect</strong>, choose the board's serial port, then <strong>Flash</strong>.</li>
+      <li>The board reboots and shows the Specter screen. If Connect fails, hold <strong>BOOT</strong>, tap <strong>RST</strong>, release <strong>BOOT</strong> and try again.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Firmware</div>
+
+    <div class="tabs">
+      <button class="tab active" id="tabRelease" onclick="setMode('release')">📦 Latest release</button>
+      <button class="tab"        id="tabCustom"  onclick="setMode('custom')">📁 Custom ZIP bundle</button>
+    </div>
+
+    <div id="releasePanel">
+      <div class="board">Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C (480×800, chip revision v0.x/v1.x)</div>
+      <div class="release" id="releaseInfo">Loading release information…</div>
+      <div class="file-list" id="releaseFileList"></div>
+    </div>
+
+    <div id="customPanel" style="display:none">
+      <div class="drop-zone" id="dropZone"
+           onclick="document.getElementById('zipInput').click()">
+        <div>Drop a firmware ZIP here or <strong>click to browse</strong></div>
+        <div style="font-size:0.75rem;margin-top:0.3rem;color:var(--muted)">
+          e.g. <code>specter-diy-wave_43-v0.1.0-alpha.2.zip</code> from the releases page
+        </div>
+        <div class="zip-name" id="zipName"></div>
+        <input type="file" id="zipInput" accept=".zip"
+               onchange="handleZipSelect(this.files[0])">
+      </div>
+      <div class="file-list" id="customFileList" style="margin-top:0.75rem"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Flash</div>
+    <label class="ack" for="ackBox">
+      <input type="checkbox" id="ackBox" onchange="updateFlashEnabled()">
+      <span>I understand this is an unofficial, experimental build that has not been
+        reviewed or audited, and I will not use it with real seeds or real funds.</span>
+    </label>
+    <div class="actions">
+      <button class="btn btn-connect" id="connectBtn" onclick="toggleConnect()">🔌 Connect</button>
+      <button class="btn btn-flash"   id="flashBtn"   onclick="startFlash()" disabled>⚡ Flash</button>
+    </div>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bg"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-lbl" id="progressLbl">0%</div>
+    </div>
+    <div class="console" id="console"></div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/sandman21vs/specter-diy/tree/esp32-p4-port" target="_blank">Source</a> ·
+    <a href="https://github.com/sandman21vs/specter-diy/releases" target="_blank">Releases</a> ·
+    <a href="https://github.com/cryptoadvance/specter-diy" target="_blank">Specter-DIY</a><br>
+    Based on the <a href="https://odudex.github.io/Kern/flash/" target="_blank">Kern Web Flasher</a> ·
+    Powered by <a href="https://github.com/espressif/esptool-js" target="_blank">esptool-js</a>
+  </footer>
+
+</div>
+
+<!-- JSZip for extracting custom zip bundles (vendored locally) -->
+<script src="./vendor/jszip-3.10.1.min.js"></script>
+
+<script type="module">
+import { ESPLoader, Transport } from './vendor/esptool-js-0.6.0.js';
+
+// The published firmware lives next to this page, in firmware/wave_43/, copied
+// there from the latest GitHub release by tools/publish-flasher.sh.
+const RELEASE_DIR = './firmware/wave_43';
+
+// Fallback flash layout, only used if a bundle has no flasher_args.json. It is
+// the layout of the Specter-DIY ESP32-P4 port (see the board's partitions.csv).
+const FLASH_FILES_FALLBACK = [
+  { name: 'bootloader.bin',      offset: 0x2000   },
+  { name: 'partition-table.bin', offset: 0x8000   },
+  { name: 'specter-diy.bin',     offset: 0x10000  },
+  { name: 'storage-reset.bin',   offset: 0x410000 },
+];
+
+// Parse flasher_args.json's flash_files map into [{name, offset}] sorted by
+// offset. Returns null on any error so callers can fall back.
+function parseFlashFiles(jsonText) {
+  try {
+    const args = JSON.parse(jsonText);
+    if (!args || !args.flash_files) return null;
+    const out = [];
+    for (const [addrHex, filePath] of Object.entries(args.flash_files)) {
+      out.push({ name: filePath.split('/').pop(), offset: parseInt(addrHex, 16) });
+    }
+    out.sort((a, b) => a.offset - b.offset);
+    return out.length ? out : null;
+  } catch { return null; }
+}
+
+// Same settings as ports/esp32p4/tools/build.sh flash.
+const FLASH_MODE = 'dio';
+const FLASH_FREQ = '40m';
+const FLASH_SIZE = '16MB';
+const BAUD       = 460800;
+
+let currentMode = 'release';
+let transport   = null;
+let esploader   = null;
+let customFiles = null; // [{name, offset, data:Uint8Array}]
+let chipRev     = null; // major * 100 + minor, read on connect
+
+// Flashing needs a connected device and the experimental-build acknowledgement.
+function updateFlashEnabled() {
+  document.getElementById('flashBtn').disabled =
+    !esploader || !document.getElementById('ackBox').checked;
+}
+window.updateFlashEnabled = updateFlashEnabled;
+
+if (!('serial' in navigator)) {
+  document.getElementById('compatBanner').style.display = 'block';
+  document.getElementById('connectBtn').disabled = true;
+}
+
+function log(msg, cls = 'l-info') {
+  const c    = document.getElementById('console');
+  const line = document.createElement('div');
+  line.className   = cls;
+  line.textContent = msg;
+  c.appendChild(line);
+  c.scrollTop = c.scrollHeight;
+}
+
+function setProgress(pct, label) {
+  document.getElementById('progressWrap').classList.add('visible');
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLbl').textContent  = label || pct + '%';
+}
+
+function clearProgress() {
+  document.getElementById('progressWrap').classList.remove('visible');
+  document.getElementById('progressFill').style.width = '0%';
+}
+
+function fileItem(name, offset, bytes) {
+  const size = bytes === undefined ? '' :
+    `<span class="size">${(bytes / 1024).toFixed(1)} KB</span>`;
+  return `<div class="file-item">
+            <span class="name">${name}</span>
+            <span><span class="addr">@ 0x${offset.toString(16).padStart(5, '0')}</span>${size}</span>
+          </div>`;
+}
+
+window.setMode = function (m) {
+  currentMode = m;
+  document.getElementById('tabRelease').classList.toggle('active', m === 'release');
+  document.getElementById('tabCustom').classList.toggle('active', m === 'custom');
+  document.getElementById('releasePanel').style.display = m === 'release' ? '' : 'none';
+  document.getElementById('customPanel').style.display  = m === 'custom'  ? '' : 'none';
+};
+
+function fmtRev(rev) {
+  return `v${Math.floor(rev / 100)}.${rev % 100}`;
+}
+
+// Bootloader and app images carry the supported range in their header:
+// min_chip_rev_full at bytes 15-16, max_chip_rev_full at 17-18.
+function checkChipRev(name, data) {
+  if (chipRev === null || data.length < 24 || data[0] !== 0xE9) return;
+  const min = data[15] | (data[16] << 8);
+  const max = data[17] | (data[18] << 8);
+  if (chipRev < min || (max !== 0xFFFF && chipRev > max)) {
+    throw new Error(`${name} supports chip revision ${fmtRev(min)} to ${fmtRev(max)}, ` +
+                    `but this chip is ${fmtRev(chipRev)}`);
+  }
+}
+
+// ── Published release ────────────────────────────────────────────────────────
+let releaseFiles = null;
+
+async function loadRelease() {
+  const info = document.getElementById('releaseInfo');
+  try {
+    const meta = await (await fetch(`${RELEASE_DIR}/release.json`, { cache: 'no-cache' })).json();
+    info.innerHTML = `Release <a href="${meta.url}" target="_blank">${meta.tag}</a>` +
+      (meta.published ? ` · ${meta.published.slice(0, 10)}` : '') +
+      ` · <a href="${RELEASE_DIR}/${meta.zip}" download>download zip</a>`;
+  } catch {
+    info.textContent = 'No published release found.';
+  }
+  try {
+    const r = await fetch(`${RELEASE_DIR}/flasher_args.json`, { cache: 'no-cache' });
+    releaseFiles = r.ok ? (parseFlashFiles(await r.text()) || FLASH_FILES_FALLBACK) : null;
+  } catch { releaseFiles = null; }
+  document.getElementById('releaseFileList').innerHTML = releaseFiles
+    ? releaseFiles.map(f => fileItem(f.name, f.offset)).join('')
+    : '';
+}
+loadRelease();
+
+// ── Custom ZIP ───────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) window.handleZipSelect(f);
+});
+
+window.handleZipSelect = async function (file) {
+  if (!file || !file.name.toLowerCase().endsWith('.zip')) {
+    log('Please select a .zip file.', 'l-err');
+    return;
+  }
+  document.getElementById('zipName').textContent = '📦 ' + file.name;
+  document.getElementById('zipInput').value      = '';
+  customFiles = null;
+
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const argsEntry = zip.file('flasher_args.json');
+    const fileList = argsEntry
+      ? (parseFlashFiles(await argsEntry.async('string')) || FLASH_FILES_FALLBACK)
+      : FLASH_FILES_FALLBACK;
+
+    const loaded = [];
+    const listEl = document.getElementById('customFileList');
+    listEl.innerHTML = '';
+    for (const ff of fileList) {
+      const entry = zip.file(ff.name);
+      if (!entry) {
+        log(`Warning: ${ff.name} not found in zip, skipping.`, 'l-err');
+        continue;
+      }
+      const data = new Uint8Array(await entry.async('arraybuffer'));
+      loaded.push({ name: ff.name, offset: ff.offset, data });
+      listEl.innerHTML += fileItem(ff.name, ff.offset, data.length);
+    }
+
+    if (loaded.length === 0) {
+      log('No recognised firmware files found in the zip.', 'l-err');
+    } else {
+      customFiles = loaded;
+      log(`Loaded ${loaded.length} file(s) from ${file.name}.`, 'l-ok');
+    }
+  } catch (e) {
+    log('Error reading zip: ' + e.message, 'l-err');
+  }
+};
+
+// ── Connect / Disconnect ─────────────────────────────────────────────────────
+window.toggleConnect = async function () {
+  if (esploader) {
+    await doDisconnect();
+  } else {
+    await doConnect();
+  }
+};
+
+async function doConnect() {
+  const connectBtn = document.getElementById('connectBtn');
+  connectBtn.disabled = true;
+  log('Requesting serial port…');
+  try {
+    const port = await navigator.serial.requestPort();
+    transport  = new Transport(port, true);
+
+    const terminal = {
+      clean:     ()  => {},
+      writeLine: s   => log(s),
+      write:     s   => log(s),
+    };
+
+    esploader   = new ESPLoader({ transport, baudrate: BAUD, terminal });
+    const chip  = await esploader.main();
+    log(`Connected to: ${chip}`, 'l-ok');
+    chipRev = esploader.chip.getChipRevision
+      ? await esploader.chip.getChipRevision(esploader) : null;
+    if (chipRev !== null && chipRev >= 300) {
+      log(`This board has chip revision ${fmtRev(chipRev)}. ` +
+          'These builds only support revisions v0.x and v1.x.', 'l-err');
+    }
+
+    connectBtn.textContent = '⏏ Disconnect';
+    connectBtn.classList.add('connected');
+    updateFlashEnabled();
+  } catch (e) {
+    log('Connection failed: ' + e.message, 'l-err');
+    transport = null;
+    esploader = null;
+  }
+  connectBtn.disabled = false;
+}
+
+async function doDisconnect() {
+  const connectBtn = document.getElementById('connectBtn');
+  connectBtn.disabled = true;
+  try {
+    if (transport) await transport.disconnect();
+  } catch { /* ignore */ }
+  transport = null;
+  esploader = null;
+  chipRev   = null;
+  connectBtn.textContent = '🔌 Connect';
+  connectBtn.classList.remove('connected');
+  updateFlashEnabled();
+  connectBtn.disabled = false;
+  log('Disconnected.');
+}
+
+// ── Flash ────────────────────────────────────────────────────────────────────
+window.startFlash = async function () {
+  if (!esploader) { log('Not connected.', 'l-err'); return; }
+  if (!document.getElementById('ackBox').checked) {
+    log('Confirm the warning above before flashing.', 'l-err');
+    return;
+  }
+
+  const connectBtn = document.getElementById('connectBtn');
+  const flashBtn   = document.getElementById('flashBtn');
+  connectBtn.disabled = true;
+  flashBtn.disabled   = true;
+  clearProgress();
+
+  try {
+    let fileArray;
+    let fileNames;
+
+    if (currentMode === 'release') {
+      if (!releaseFiles) throw new Error('No published release is available. Use a custom ZIP.');
+      log('Downloading firmware…');
+      fileArray = [];
+      fileNames = [];
+      for (const ff of releaseFiles) {
+        log(`  Fetching ${ff.name}…`);
+        const resp = await fetch(`${RELEASE_DIR}/${ff.name}`, { cache: 'no-cache' });
+        if (!resp.ok) throw new Error(`Failed to fetch ${ff.name} (HTTP ${resp.status})`);
+        const data = new Uint8Array(await resp.arrayBuffer());
+        fileArray.push({ data, address: ff.offset });
+        fileNames.push(ff.name);
+        log(`  ✓ ${ff.name} (${(data.length / 1024).toFixed(1)} KB)`, 'l-ok');
+      }
+    } else {
+      if (!customFiles || customFiles.length === 0) {
+        throw new Error('Please load a firmware ZIP bundle first.');
+      }
+      fileArray = customFiles.map(f => ({ data: f.data, address: f.offset }));
+      fileNames = customFiles.map(f => f.name);
+    }
+
+    fileArray.forEach((f, i) => checkChipRev(fileNames[i], f.data));
+
+    log(`Flashing ${fileArray.length} file(s)…`);
+    setProgress(0, 'Preparing…');
+
+    await esploader.writeFlash({
+      fileArray,
+      flashMode: FLASH_MODE,
+      flashFreq: FLASH_FREQ,
+      flashSize: FLASH_SIZE,
+      eraseAll:  false,
+      compress:  true,
+      reportProgress: (fileIndex, written, total) => {
+        const pct  = Math.round((written / total) * 100);
+        const name = fileNames[fileIndex] || '';
+        setProgress(pct, `${name}: ${pct}%`);
+      },
+    });
+
+    setProgress(100, 'Done!');
+    log('Flash complete. Resetting device…', 'l-ok');
+    await esploader.after('hard_reset');
+    log('Device reset. Flash successful! ✓', 'l-ok');
+
+  } catch (e) {
+    log('Flash error: ' + e.message, 'l-err');
+    clearProgress();
+  }
+
+  connectBtn.disabled = false;
+  updateFlashEnabled();
+};
+</script>
+</body>
+</html>

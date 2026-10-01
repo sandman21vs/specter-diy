@@ -33,6 +33,20 @@ Every item below was tested on the board.
 - A USB-C data cable, plugged into the port labelled **UART** (not USB-OTG)
 - A computer running **macOS** or **Linux**, with ~6 GB of free disk space
 
+## Flash from the browser
+
+The quickest way to try it: open the
+**[Specter-DIY Web Flasher](https://sandman21vs.github.io/specter-diy/)** in
+Chrome, Edge or Brave on a desktop computer, plug the board into its **UART**
+port, then click **Connect** and **Flash**. It installs the latest
+[release](https://github.com/sandman21vs/specter-diy/releases).
+
+Flashing wipes everything stored on the board.
+
+The flasher is adapted from the [Kern Web Flasher](https://odudex.github.io/Kern/flash/);
+its source is in [`ports/esp32p4/flasher/`](./ports/esp32p4/flasher). To
+publish a new release to it, run `ports/esp32p4/tools/publish-flasher.sh`.
+
 ## Build and flash
 
 Copy and paste each block into your terminal. The first run downloads the
@@ -165,7 +179,7 @@ Design notes, pin maps and every problem found along the way are in
   secp256k1 bindings updated for current MicroPython
 - [odudex/Kern](https://github.com/odudex/Kern) and
   [odudex/k_quirc](https://github.com/odudex/k_quirc): Waveshare 4.3 BSP, camera
-  pipeline and QR decoder
+  pipeline, QR decoder and the web flasher
 - [diybitcoinhardware/f469-disco](https://github.com/diybitcoinhardware/f469-disco):
   LVGL, `embit` and the other shared libraries
 
