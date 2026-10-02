@@ -16,7 +16,15 @@ BUILD_DIR="$MICROPYTHON_DIR/ports/esp32/build-W43"
 
 detect_port() {
   local p
-  for p in ${PORT:-} /dev/ttyACM* /dev/ttyUSB* /dev/cu.usbmodem* /dev/cu.wchusbserial*; do
+  [ -n "${PORT:-}" ] && { echo "$PORT"; return; }
+  # Prefer the board's CH343 USB-UART bridge (VID 1A86), the only port that can
+  # flash. With the Specter USB port enabled the board also shows up as a
+  # usbmodem device, and it sorts first on macOS.
+  p="$(python -c "
+import serial.tools.list_ports as l
+print(next((x.device for x in l.comports() if x.vid == 0x1A86), ''))" 2>/dev/null || true)"
+  [ -n "$p" ] && { echo "$p"; return; }
+  for p in /dev/ttyACM* /dev/ttyUSB* /dev/cu.usbmodem* /dev/cu.wchusbserial*; do
     [ -e "$p" ] && { echo "$p"; return; }
   done
   echo "no serial port found: plug the board's UART port, or pass the port as an argument" >&2
