@@ -465,21 +465,6 @@ BATTERY_TABLE = [
     (3.6,  0),
 ]
 
-def _battery_level(voltage):
-    level = 0
-    for i, (v, lvl) in enumerate(BATTERY_TABLE):
-        if voltage > v:
-            # max voltage
-            if i == 0:
-                level = lvl
-                break
-            # linear interpolation
-            prevV, prevLvl = BATTERY_TABLE[i-1]
-            level = int(lvl + (prevLvl-lvl)*(voltage-v)/(prevV-v))
-            break
-    return level
-
-
 # Waveshare ESP32-P4 4.3-C: BAT --[200k]-- BAT_ADC --[100k]-- GND on GPIO20
 # (ADC1 channel 4), as read by Kern's bsp_common/pmic_adc.c on the same board.
 _BAT_ADC_PIN = 20
@@ -488,6 +473,13 @@ _BAT_DIVIDER = 3
 _BAT_SAMPLES = 16
 # Below this the pin is not following a Li-ion cell: no battery connected.
 _BAT_MIN_VOLTAGE = 2.5
+# Three states instead of a percentage. Voltage is not a state of charge, so
+# finer steps would only flicker; full from 3.7 V, half from 3.5 V, below that
+# empty. The levels map to the GUI's full, half and empty battery icons.
+_BAT_LEVELS = (
+    (3.7, 100),
+    (3.5, 50),
+)
 _bat_adc = None
 
 
@@ -508,9 +500,14 @@ def _esp32_battery_status():
         return None, None
     if voltage < _BAT_MIN_VOLTAGE:
         return None, None
+    level = 0
+    for threshold, value in _BAT_LEVELS:
+        if voltage >= threshold:
+            level = value
+            break
     # No charger status or VBUS sense is wired to the P4 on this board, so
     # whether it is charging is unknown.
-    return _battery_level(voltage), None
+    return level, None
 
 
 def get_battery_status():
