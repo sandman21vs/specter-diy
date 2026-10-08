@@ -73,12 +73,24 @@ class NoCardException(SmartcardException):
     pass
 
 
+_debug = False
+
+
 def enableDebug(*args, **kwargs):
-    pass
+    """Imprime no console cada comando CCID e cada resposta, em hexadecimal."""
+    global _debug
+    _debug = True
 
 
 def disableDebug(*args, **kwargs):
-    pass
+    global _debug
+    _debug = False
+
+
+def _trace(direction, data):
+    import binascii
+
+    print("uscard", direction, binascii.hexlify(data).decode())
 
 
 def _lrc(data):
@@ -140,7 +152,11 @@ class _SEC1210:
         )
         frame = bytes([_SYNC, _CTRL_ACK]) + message
         frame += bytes([_lrc(frame)])
-        uart.read()  # descarta notificacoes antigas de troca de cartao
+        stale = uart.read()  # descarta notificacoes antigas de troca de cartao
+        if _debug:
+            if stale:
+                _trace("stale", stale)
+            _trace(">", message)
         uart.write(frame)
         try:
             return self._response(seq, time.ticks_add(time.ticks_ms(), timeout_ms))
@@ -174,6 +190,8 @@ class _SEC1210:
                 raise CardConnectionException("card reader checksum error")
             if header[6] != seq:
                 continue
+            if _debug:
+                _trace("<", header + data)
             status = header[7]
             if (status >> 6) == _CMD_TIME_EXTENSION:
                 # O leitor avisa que o cartao pediu mais tempo e responde depois.
