@@ -33,6 +33,14 @@ if not simulator:
         # Sem acesso a registradores do STM32 aqui; as funcoes que dependiam
         # disso tem ramo proprio mais abaixo.
         stm = None
+        # MicroPython brings the native USB port up with its REPL on it. Turn it
+        # off before any screen is shown: otherwise anyone plugging the board
+        # into a computer while it waits for the PIN gets a Python console. The
+        # Specter USB port is enabled later, from the USB host settings.
+        try:
+            pyb.usb_mode(None)
+        except Exception as e:
+            print("usb:", e)
     else:
         import stm
 else:
@@ -444,9 +452,9 @@ def usb_connected():
     if simulator:
         return True
     if esp32:
-        # Esta placa expoe o console por uma ponte CH343 e o port nao usa USB
-        # nativo, entao nao ha linha de VBUS para consultar.
-        return False
+        # No VBUS line reaches the P4 on this board; the native USB port counts
+        # as connected once a host has configured the Specter serial port.
+        return pyb.USB_VCP().isconnected()
     return bool(pyb.Pin.board.USB_VBUS.value())
 
 BATTERY_TABLE = [
@@ -457,7 +465,54 @@ BATTERY_TABLE = [
     (3.6,  0),
 ]
 
+# Waveshare ESP32-P4 4.3-C: BAT --[200k]-- BAT_ADC --[100k]-- GND on GPIO20
+# (ADC1 channel 4), as read by Kern's bsp_common/pmic_adc.c on the same board.
+_BAT_ADC_PIN = 20
+_BAT_DIVIDER = 3
+# The divider node is noisy; Kern averages 16 samples too.
+_BAT_SAMPLES = 16
+# Below this the pin is not following a Li-ion cell: no battery connected.
+_BAT_MIN_VOLTAGE = 2.5
+# Three states instead of a percentage. Voltage is not a state of charge, so
+# finer steps would only flicker; full from 3.7 V, half from 3.5 V, below that
+# empty. The levels map to the GUI's full, half and empty battery icons.
+_BAT_LEVELS = (
+    (3.7, 100),
+    (3.5, 50),
+)
+_bat_adc = None
+
+
+def _esp32_battery_status():
+    global _bat_adc
+    try:
+        if _bat_adc is None:
+            import machine
+            # 11 dB is the widest range (MicroPython maps it to the P4's 12 dB);
+            # a full 4.2 V cell puts 1.4 V on the pin.
+            _bat_adc = machine.ADC(machine.Pin(_BAT_ADC_PIN), atten=machine.ADC.ATTN_11DB)
+        total = 0
+        for _ in range(_BAT_SAMPLES):
+            total += _bat_adc.read_uv()
+        voltage = total / _BAT_SAMPLES * _BAT_DIVIDER / 1e6
+    except Exception as e:
+        print("battery:", e)
+        return None, None
+    if voltage < _BAT_MIN_VOLTAGE:
+        return None, None
+    level = 0
+    for threshold, value in _BAT_LEVELS:
+        if voltage >= threshold:
+            level = value
+            break
+    # No charger status or VBUS sense is wired to the P4 on this board, so
+    # whether it is charging is unknown.
+    return level, None
+
+
 def get_battery_status():
+    if esp32:
+        return _esp32_battery_status()
     # simulator or no i2c
     if i2c is None:
         return None, None

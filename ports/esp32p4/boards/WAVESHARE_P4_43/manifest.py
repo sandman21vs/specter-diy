@@ -36,5 +36,8 @@ freeze(_COMMON, "microur")
 freeze(_COMMON, "bcur.py")
 freeze(_COMMON, "lvqr.py")
 
+# Porta serial USB do Specter no USB nativo (pyb.USB_VCP), por machine.USBDevice.
+require("usb-device-cdc")
+
 # O aplicativo Specter.
 freeze(_ROOT + "/src")
