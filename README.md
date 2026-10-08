@@ -3,7 +3,9 @@
 This is a fork of [cryptoadvance/specter-diy](https://github.com/cryptoadvance/specter-diy)
 that runs the Specter firmware on the **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C**:
 a single off-the-shelf board with a 4.3" touchscreen, a camera for QR codes and a
-microSD slot. No soldering, no extra parts.
+microSD slot. The wallet itself needs no soldering and no extra parts; an
+optional [smartcard hat](#smartcard-hat-optional) adds the Specter smartcard
+keystore.
 
 > [!WARNING]
 > **Work in progress. Do not use with real funds.** The firmware is built in a
@@ -22,7 +24,10 @@ Every item below was tested on the board.
 | secp256k1 (ECDSA, Schnorr/BIP340 test vectors) | working |
 | Bitcoin stack (`embit`, official BIP84 test vectors) | working |
 | OV5647 camera over MIPI-CSI, QR scanning | working, ~11 scans/s |
-| microSD (FAT) | working |
+| microSD (MBR + FAT32) | working |
+| USB with Specter Desktop / HWI (native USB port) | working |
+| Battery level | working, three states |
+| Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
 | Hardware random number generator | working |
 | ESP32-C6 radio | held in reset (airgapped by design) |
 | Secure boot / flash encryption / secure wipe | **not implemented** |
@@ -32,6 +37,8 @@ Every item below was tested on the board.
 - [Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm)
 - A USB-C data cable, plugged into the port labelled **UART** (not USB-OTG)
 - A computer running **macOS** or **Linux**, with ~6 GB of free disk space
+- Optional: a [smartcard hat](#smartcard-hat-optional) and a JavaCard with the
+  Specter applet, to keep the key on a smartcard
 
 ## Flash from the browser
 
@@ -46,6 +53,52 @@ Flashing wipes everything stored on the board.
 The flasher is adapted from the [Kern Web Flasher](https://odudex.github.io/Kern/flash/);
 its source is in [`ports/esp32p4/flasher/`](./ports/esp32p4/flasher). To
 publish a new release to it, run `ports/esp32p4/tools/publish-flasher.sh`.
+
+## Smartcard hat (optional)
+
+Specter can keep the key on a smartcard instead of on the device. On this board
+that works with the **SEC1210 Smartcard Hat** by CryptoGuide:
+
+- Buy it ready-made: **[cryptoguide.tips/shop](https://cryptoguide.tips/shop/)**
+- Design files and build notes:
+  [3rdIteration/seedsigner, `electronics/SmartcardHat`](https://github.com/3rdIteration/seedsigner/tree/main/electronics/SmartcardHat)
+
+The card needs the Specter applet from
+[specter-javacard](https://github.com/cryptoadvance/specter-javacard)
+(MemoryCard). Other cards are detected by the reader, but Specter cannot use
+them.
+
+### The hat needs a small rework
+
+The hat was designed for a Raspberry Pi. On a Pi header its serial lines are on
+pins 8 and 10, and on this board those pins are **GPIO37 and GPIO38**: the
+console, also used to flash the firmware. Plugged in as it is, the hat would
+fight with the console and the card would see the boot log.
+
+So the two serial lines are moved to GPIO21 and GPIO22. This takes a soldering
+iron and two short wires:
+
+1. **Lift R44 and R45** on the hat. They are the two 100 Ω resistors in series
+   with the serial lines, between the header and the SEC1210 chip. With them
+   lifted, the hat no longer touches GPIO37 and GPIO38.
+2. **Solder a wire from each resistor's chip-side pad to the board**:
+
+   | Hat | Signal | Board | Header pin |
+   |---|---|---|---|
+   | R44, chip side | P4 TX → SEC1210 RXD | **GPIO21** | 15 |
+   | R45, chip side | P4 RX ← SEC1210 TXD | **GPIO22** | 17 |
+
+3. Plug the hat onto the 40-pin header as usual. It takes 5 V and ground from
+   the header; nothing else needs wiring.
+
+Insert the card and power the board. Specter picks the smartcard keystore at
+boot when it finds a card with the applet.
+
+If the card is not found, copy
+[`ports/esp32p4/test_uscard.py`](./ports/esp32p4/test_uscard.py) to the board
+and run it from the serial console. It says which step fails: the reader, the
+card, the ATR or the command exchange. If the reader does not answer, the two
+wires are most likely swapped.
 
 ## Build and flash
 
