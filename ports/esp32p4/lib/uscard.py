@@ -58,6 +58,15 @@ _XFR_TIMEOUT_MS = 20000
 # do cartao em lacos, entao depois de uma falha nao insistimos por este tempo.
 _READER_RETRY_MS = 2000
 
+# Na partida a frio o SEC1210 liga junto com o P4. Ele ja responde a comandos
+# aos ~670 ms, quando o Specter pergunta pelo cartao, mas ainda diz "slot
+# vazio": nao terminou de detectar o cartao. O Specter pergunta uma vez so, no
+# boot, e escolhia outro keystore. Por isso, durante esta janela a partir do
+# primeiro contato com o leitor, "vazio" nao e definitivo e perguntamos de novo.
+# Medido na placa: o cartao aparece ~70 ms depois da primeira consulta.
+_SETTLE_MS = 1000
+_SETTLE_POLL_MS = 50
+
 _T1_MAX_RETRIES = 3
 
 
@@ -74,6 +83,17 @@ class NoCardException(SmartcardException):
 
 
 _debug = False
+
+# Primeiros comandos desde o boot: (ms desde o boot, tipo, resultado). Fica na
+# memoria para diagnosticar a partida a frio, quando o leitor e o P4 ligam
+# juntos e nao ha console aberto para ver o que aconteceu.
+history = []
+_HISTORY_MAX = 32
+
+
+def _record(message_type, outcome):
+    if len(history) < _HISTORY_MAX:
+        history.append((time.ticks_ms(), message_type, outcome))
 
 
 def enableDebug(*args, **kwargs):
@@ -107,6 +127,7 @@ class _SEC1210:
         self._uart = None
         self._seq = 0
         self._absent_until = None
+        self._settle_deadline = None
 
     def _open(self):
         if self._uart is None:
@@ -138,6 +159,7 @@ class _SEC1210:
         """Manda um comando CCID e devolve (bStatus, bError, dados)."""
         if self._absent_until is not None:
             if time.ticks_diff(self._absent_until, time.ticks_ms()) > 0:
+                _record(message_type, "skipped: reader marked absent")
                 raise CardConnectionException("card reader not responding")
             self._absent_until = None
         uart = self._open()
@@ -159,10 +181,13 @@ class _SEC1210:
             _trace(">", message)
         uart.write(frame)
         try:
-            return self._response(seq, time.ticks_add(time.ticks_ms(), timeout_ms))
-        except CardConnectionException:
+            result = self._response(seq, time.ticks_add(time.ticks_ms(), timeout_ms))
+        except CardConnectionException as error:
+            _record(message_type, str(error))
             self._absent_until = time.ticks_add(time.ticks_ms(), _READER_RETRY_MS)
             raise
+        _record(message_type, (result[0], result[1], len(result[2])))
+        return result
 
     def _response(self, seq, deadline):
         while True:
@@ -200,6 +225,14 @@ class _SEC1210:
 
     def card_present(self):
         status, _, _ = self.command(_PC_GET_SLOT_STATUS, timeout_ms=_STATUS_TIMEOUT_MS)
+        if self._settle_deadline is None:
+            # Primeira resposta do leitor: a janela de acomodacao comeca aqui.
+            self._settle_deadline = time.ticks_add(time.ticks_ms(), _SETTLE_MS)
+        while (status & 0x03) == _ICC_ABSENT and time.ticks_diff(
+            self._settle_deadline, time.ticks_ms()
+        ) > 0:
+            time.sleep_ms(_SETTLE_POLL_MS)
+            status, _, _ = self.command(_PC_GET_SLOT_STATUS, timeout_ms=_STATUS_TIMEOUT_MS)
         return (status & 0x03) != _ICC_ABSENT
 
     def power_on(self):

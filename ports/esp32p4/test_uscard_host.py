@@ -132,6 +132,7 @@ class FakeSEC1210:
     silent = False
     noise = True
     voltage = 1  # bPowerSelect que o cartao aceita: 1 = 5 V, 2 = 3 V, 3 = 1,8 V
+    detect_after = 0  # quantas consultas de status respondem "vazio" antes de ver o cartao
 
     def __init__(self, *args, **kwargs):
         assert kwargs["baudrate"] == 115200 and kwargs["stop"] == 2
@@ -162,7 +163,11 @@ class FakeSEC1210:
         if cls.noise:
             out += bytes([0x50, 0x03])  # notificacao de troca de cartao, fora de quadro
         if msg_type == 0x65:
-            out += self.reply(0x81, seq, status=icc if cls.card or not cls.present else 1)
+            if cls.detect_after > 0:
+                cls.detect_after -= 1
+                out += self.reply(0x81, seq, status=2)  # ainda nao detectou o cartao
+            else:
+                out += self.reply(0x81, seq, status=icc if cls.card or not cls.present else 1)
         elif msg_type == 0x62:
             self.power_selects = getattr(self, "power_selects", []) + [message[7]]
             if cls.present and message[7] != cls.voltage:
@@ -201,6 +206,8 @@ import uscard  # noqa: E402
 
 uscard._STATUS_TIMEOUT_MS = 50
 uscard._READER_RETRY_MS = 100
+uscard._SETTLE_MS = 400
+uscard._SETTLE_POLL_MS = 10
 
 
 def check(name, condition):
@@ -247,9 +254,19 @@ def main():
     except uscard.NoCardException:
         check("transmit after disconnect raises", True)
 
+    # Partida a frio: o leitor responde, mas so ve o cartao algumas consultas depois.
+    FakeSEC1210.detect_after = 8
+    conn = fresh()
+    check("cold start: card found once the reader detects it", conn.isCardInserted())
+    check("cold start: it took the reader's 8 empty answers", FakeSEC1210.detect_after == 0)
+
     FakeSEC1210.present = False
     conn = fresh()
+    started = time.monotonic()
     check("no card: isCardInserted is False", not conn.isCardInserted())
+    check("no card: waited for the settle window once", 0.3 < time.monotonic() - started < 1.0)
+    started = time.monotonic()
+    check("no card: later polls answer at once", not conn.isCardInserted() and time.monotonic() - started < 0.1)
     try:
         conn.connect(conn.T1_protocol)
         check("no card: connect raises NoCardException", False)
