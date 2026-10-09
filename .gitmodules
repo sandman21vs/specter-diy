@@ -1,6 +1,14 @@
 [submodule "f469-disco"]
 	path = f469-disco
-	url = https://github.com/diybitcoinhardware/f469-disco
+	url = https://github.com/diybitcoinhardware/f469-disco.git
+	branch = micropython-upgrade
 [submodule "bootloader"]
 	path = bootloader
 	url = https://github.com/cryptoadvance/specter-bootloader
+[submodule "ports/esp32p4/components/secp256k1"]
+	path = ports/esp32p4/components/secp256k1
+	url = https://github.com/sandman21vs/secp256k1-embedded.git
+	branch = micropython-master-api
+[submodule "ports/esp32p4/idf_components/k_quirc"]
+	path = ports/esp32p4/idf_components/k_quirc
+	url = https://github.com/odudex/k_quirc.git

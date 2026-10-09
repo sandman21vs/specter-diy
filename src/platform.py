@@ -5,6 +5,10 @@ import pyb
 import gc
 
 simulator = (sys.platform in ["linux", "darwin"])
+# ESP32-P4 (Waveshare 4.3-C). Roda em hardware, mas nao e um STM32: nao ha
+# modulo `stm`, nem registradores do Cortex-M, nem os option bytes que as
+# funcoes de protecao liam.
+esp32 = (sys.platform == "esp32")
 
 
 # Build metadata injected at boot time. Defaults represent the minimum
@@ -23,11 +27,24 @@ except:
 
 if not simulator:
     import sdram
-    import stm
 
     sdram.init()
+    if esp32:
+        # Sem acesso a registradores do STM32 aqui; as funcoes que dependiam
+        # disso tem ramo proprio mais abaixo.
+        stm = None
+        # MicroPython brings the native USB port up with its REPL on it. Turn it
+        # off before any screen is shown: otherwise anyone plugging the board
+        # into a computer while it waits for the PIN gets a Python console. The
+        # Specter USB port is enabled later, from the USB host settings.
+        try:
+            pyb.usb_mode(None)
+        except Exception as e:
+            print("usb:", e)
+    else:
+        import stm
 else:
-    _PREALLOCATED = bytes(0x100000)
+    _PREALLOCATED = bytearray(0x100000)
     stm = None
 
 # injected by the boot.py
@@ -126,6 +143,13 @@ if simulator:
     maybe_mkdir(fpath("/qspi"))
     maybe_mkdir(fpath("/sd"))
     sdcard = SDCard(None, None)
+elif esp32:
+    # A placa tem um unico sistema de arquivos interno montado em "/". Os dois
+    # caminhos que o app espera viram diretorios dentro dele, preservando a
+    # separacao logica que o F469 tinha entre flash interna e QSPI.
+    maybe_mkdir(fpath("/flash"))
+    maybe_mkdir(fpath("/qspi"))
+    sdcard = SDCard(pyb.SDCard(), pyb.LED(4))
 else:
     storage_root = ""
     sdcard = SDCard(pyb.SDCard(), pyb.LED(4))
@@ -186,6 +210,16 @@ def get_firmware_boot_mode() -> str:
     if simulator:
         return "simulator"
 
+    if esp32:
+        # O equivalente ao VTOR aqui e saber de qual particao a app subiu.
+        try:
+            import esp32 as _esp32
+
+            running = _esp32.Partition(_esp32.Partition.RUNNING)
+            return running.info()[4]
+        except Exception:
+            return "unknown"
+
     try:
         vtor = stm.mem32[0xE000ED08]
     except Exception:
@@ -203,6 +237,14 @@ def get_flash_read_protection_status() -> str:
 
     if simulator:
         return "not applicable"
+
+    if esp32:
+        # Nao ha API para ler eFuses a partir do MicroPython, e o estado de
+        # Secure Boot / flash encryption vive neles. Reportar o que o perfil de
+        # build pretendia seria afirmar em tempo de execucao algo que nao foi
+        # verificado -- justamente o tipo de coisa que nao se faz num readout
+        # de seguranca de carteira. Ate existir leitura real, "unknown".
+        return "unknown"
 
     try:
         option_control = stm.mem32[0x40023C14]
@@ -223,6 +265,14 @@ def get_flash_write_protection_status() -> str:
 
     if simulator:
         return "not applicable"
+
+    if esp32:
+        # Nao ha API para ler eFuses a partir do MicroPython, e o estado de
+        # Secure Boot / flash encryption vive neles. Reportar o que o perfil de
+        # build pretendia seria afirmar em tempo de execucao algo que nao foi
+        # verificado -- justamente o tipo de coisa que nao se faz num readout
+        # de seguranca de carteira. Ate existir leitura real, "unknown".
+        return "unknown"
 
     try:
         option_control = stm.mem32[0x40023C14]
@@ -259,8 +309,8 @@ def mount_sdram():
 def get_preallocated_ram():
     """Returns pointer and size of preallocated memory"""
     if simulator:
-        import ctypes
-        return ctypes.addressof(_PREALLOCATED), len(_PREALLOCATED)
+        import uctypes
+        return uctypes.addressof(_PREALLOCATED), len(_PREALLOCATED)
     else:
         return sdram.preallocated_ptr(), sdram.preallocated_size()
 
@@ -371,6 +421,17 @@ def wipe():
         delete_recursively(fpath("/qspi"))
     except:
         pass
+    if esp32:
+        # /flash e /qspi sao diretorios dentro do unico sistema de arquivos
+        # interno, nao volumes montados: ja foram apagados acima. Sobrescrever
+        # a particao inteira com bytes aleatorios exige desmontar a raiz de
+        # onde este codigo esta rodando, o que nao da para fazer de dentro.
+        #
+        # NAO IMPLEMENTADO. Apagamento seguro nesta placa precisa acontecer no
+        # bootloader, e ate la o wipe aqui e apenas remocao de arquivos.
+        reboot()
+        return
+
     # on real hardware overwrite flash with random data
     if not simulator:
         os.umount("/flash")
@@ -390,6 +451,10 @@ def wipe():
 def usb_connected():
     if simulator:
         return True
+    if esp32:
+        # No VBUS line reaches the P4 on this board; the native USB port counts
+        # as connected once a host has configured the Specter serial port.
+        return pyb.USB_VCP().isconnected()
     return bool(pyb.Pin.board.USB_VBUS.value())
 
 BATTERY_TABLE = [
@@ -400,7 +465,54 @@ BATTERY_TABLE = [
     (3.6,  0),
 ]
 
+# Waveshare ESP32-P4 4.3-C: BAT --[200k]-- BAT_ADC --[100k]-- GND on GPIO20
+# (ADC1 channel 4), as read by Kern's bsp_common/pmic_adc.c on the same board.
+_BAT_ADC_PIN = 20
+_BAT_DIVIDER = 3
+# The divider node is noisy; Kern averages 16 samples too.
+_BAT_SAMPLES = 16
+# Below this the pin is not following a Li-ion cell: no battery connected.
+_BAT_MIN_VOLTAGE = 2.5
+# Three states instead of a percentage. Voltage is not a state of charge, so
+# finer steps would only flicker; full from 3.7 V, half from 3.5 V, below that
+# empty. The levels map to the GUI's full, half and empty battery icons.
+_BAT_LEVELS = (
+    (3.7, 100),
+    (3.5, 50),
+)
+_bat_adc = None
+
+
+def _esp32_battery_status():
+    global _bat_adc
+    try:
+        if _bat_adc is None:
+            import machine
+            # 11 dB is the widest range (MicroPython maps it to the P4's 12 dB);
+            # a full 4.2 V cell puts 1.4 V on the pin.
+            _bat_adc = machine.ADC(machine.Pin(_BAT_ADC_PIN), atten=machine.ADC.ATTN_11DB)
+        total = 0
+        for _ in range(_BAT_SAMPLES):
+            total += _bat_adc.read_uv()
+        voltage = total / _BAT_SAMPLES * _BAT_DIVIDER / 1e6
+    except Exception as e:
+        print("battery:", e)
+        return None, None
+    if voltage < _BAT_MIN_VOLTAGE:
+        return None, None
+    level = 0
+    for threshold, value in _BAT_LEVELS:
+        if voltage >= threshold:
+            level = value
+            break
+    # No charger status or VBUS sense is wired to the P4 on this board, so
+    # whether it is charging is unknown.
+    return level, None
+
+
 def get_battery_status():
+    if esp32:
+        return _esp32_battery_status()
     # simulator or no i2c
     if i2c is None:
         return None, None

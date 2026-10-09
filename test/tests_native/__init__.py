@@ -6,3 +6,8 @@ from .test_change_classification import *
 from .test_transaction_confirmation import *
 from .test_change_security import *
 from .test_embed_git_info import *
+from .test_kef import *
+from .test_nfc import *
+from .test_nfc_seed import *
+from .test_nfc_isodep import *
+from .test_nfc_smartcard import *

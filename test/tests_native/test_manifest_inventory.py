@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from unittest import TestCase
+from unittest import TestCase, skipUnless
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +26,15 @@ def load_manifest_inventory(filename):
     return freeze_calls[0]
 
 
+# These manifests arrive with the f469-disco commit that turns embit into a
+# submodule. The esp32-p4-port branch pins f469-disco on its LVGL 9 line, which
+# still vendors embit and has neither file, so there is nothing to check yet.
+HAS_SPLIT_MANIFESTS = (MANIFEST_DIR / "common.py").exists() and (
+    MANIFEST_DIR / "embit.py"
+).exists()
+
+
+@skipUnless(HAS_SPLIT_MANIFESTS, "f469-disco still vendors embit on this branch")
 class ManifestInventoryTest(TestCase):
     def test_common_inventory_matches_source_tree(self):
         common_root = ROOT / "f469-disco" / "libs" / "common"
