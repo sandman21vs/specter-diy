@@ -6,6 +6,7 @@ target_sources(usermod_p4board INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/modp4board.c
     ${CMAKE_CURRENT_LIST_DIR}/display.c
     ${CMAKE_CURRENT_LIST_DIR}/touch.c
+    ${CMAKE_CURRENT_LIST_DIR}/i2c.c
     ${CMAKE_CURRENT_LIST_DIR}/radio.c
 )
 

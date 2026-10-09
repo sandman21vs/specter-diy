@@ -126,6 +126,8 @@ esp_err_t p4board_touch_init(void) {
 }
 
 void p4board_touch_deinit(void) {
+    /* External device handles live on this bus and must go first. */
+    p4board_i2c_release();
     if (device) {
         i2c_master_bus_rm_device(device);
         device = NULL;
