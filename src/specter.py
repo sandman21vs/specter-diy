@@ -331,14 +331,41 @@ class Specter:
             return
         return self.set_mnemonic(mnemonic, "")
 
+    def nfc_supported(self):
+        """True when this build has a driver for an NFC reader"""
+        try:
+            import nfc
+
+            return nfc.is_supported()
+        except Exception:
+            return False
+
+    def nfc_enabled(self):
+        """NFC is off until it is switched on in the communication settings"""
+        return bool(self.GLOBAL.get("nfc", {}).get("enabled", False))
+
     def nfc_available(self):
-        """True when an NFC reader is plugged in right now"""
+        """True when NFC is switched on and a reader is plugged in right now"""
+        if not self.nfc_enabled():
+            return False
         try:
             import nfc
 
             return nfc.is_available()
         except Exception:
             return False
+
+    async def nfc_settings(self):
+        from nfc.settings import settings_menu
+
+        def save(enabled):
+            settings = dict(self.GLOBAL)
+            settings["nfc"] = {"enabled": enabled}
+            self.GLOBAL = settings
+            BaseApp.GLOBAL = settings
+            self.save_settings(settings)
+
+        await settings_menu(self.gui, self.nfc_enabled(), save)
 
     async def load_mnemonic_from_nfc(self):
         from nfc.seed import load_mnemonic
@@ -516,6 +543,8 @@ class Specter:
             for host in self.hosts
             if host.settings_button is not None
         ]
+        if self.nfc_supported():
+            buttons.append(("nfc", "NFC card reader"))
         while True:
             menuitem = await self.gui.menu(buttons,
                                       title="Communication settings",
@@ -524,6 +553,8 @@ class Specter:
             )
             if menuitem == 255:
                 return
+            elif menuitem == "nfc":
+                await self.nfc_settings()
             elif isinstance(menuitem, Host):
                 reboot_required = await menuitem.settings_menu(self.gui.show_screen(), self.keystore)
                 if reboot_required:
@@ -581,10 +612,9 @@ class Specter:
             return
         taproot, *_ = res
         # for now only experimental, can be extended
-        settings = {
-            "experimental": {
-                "taproot": taproot,
-            }
+        settings = dict(self.GLOBAL)
+        settings["experimental"] = {
+            "taproot": taproot,
         }
         self.GLOBAL = settings
         BaseApp.GLOBAL = settings

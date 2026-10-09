@@ -241,6 +241,11 @@ def open_reader():
     return driver.WS1850S()
 
 
+def is_supported():
+    """True when this build has a reader driver, plugged in or not"""
+    return bool(_load_driver())
+
+
 def is_available():
     """True when a reader answers right now.
 
