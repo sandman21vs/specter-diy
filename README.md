@@ -28,7 +28,7 @@ Every item below was tested on the board.
 | USB with Specter Desktop / HWI (native USB port) | working |
 | Battery level | working, three states |
 | Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
-| Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | **experimental, not yet tested on the board** |
+| Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | working, **experimental** |
 | Hardware random number generator | working |
 | ESP32-C6 radio | held in reset (airgapped by design) |
 | Secure boot / flash encryption / secure wipe | **not implemented** |
@@ -103,10 +103,9 @@ wires are most likely swapped.
 
 ## NFC card reader (optional, experimental)
 
-> **Proof of concept. Do not rely on it for a real key yet.** It has passed its
-> tests against a simulated reader and simulated cards, and it builds into the
-> firmware, but it has **not been run on the board with a real reader**. It has
-> had no security review. Keep another backup.
+> **Proof of concept. Do not rely on it for a real key yet.** Saving a key to
+> a card and loading it back works on the board, but it has had little use and
+> no security review. Keep another backup.
 
 With an **[M5Stack RFID Unit 2](https://shop.m5stack.com/products/rfid-unit-2-ws1850s)**
 (WS1850S) plugged in, Specter can save the recovery phrase to an NFC card,

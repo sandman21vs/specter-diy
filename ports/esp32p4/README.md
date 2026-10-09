@@ -484,9 +484,9 @@ nem era compilado.
 ## NFC — backup da seed em cartão
 
 Leitor **M5Stack RFID Unit 2** (WS1850S) no I²C da placa. Salva a seed cifrada
-num cartão e carrega de volta. **Ainda não rodou na placa com leitor de
-verdade**: passou nos testes contra leitor e cartões simulados, e sob o
-MicroPython da porta unix, só isso.
+num cartão e carrega de volta. **Validado no hardware**: salvar e carregar
+funcionam na placa com o leitor. Antes disso passou nos testes contra leitor e
+cartões simulados, e sob o MicroPython da porta unix.
 
 ### Camadas
 
@@ -538,8 +538,7 @@ mpremote exec "import test_nfc; test_nfc.roundtrip()"  # ESCREVE um registro de 
 
 ### O que falta
 
-- Rodar na placa: alcance em 3,3 V, tempo do PBKDF2 de 100.000 rodadas, e se o
-  leitor convive com o touch e a câmera no mesmo barramento.
+- Medir na placa: alcance em 3,3 V e tempo do PBKDF2 de 100.000 rodadas.
 - Descritores de carteira no cartão (tipo 2 do formato), como o Kern faz.
 - Apagar um cartão.
 
