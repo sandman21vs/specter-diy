@@ -109,33 +109,83 @@ wires are most likely swapped.
 
 With an **[M5Stack RFID Unit 2](https://shop.m5stack.com/products/rfid-unit-2-ws1850s)**
 (WS1850S) plugged in, Specter can save the recovery phrase to an NFC card,
-encrypted with a password, and load it back:
-
-- **Save:** Settings → *Save key to NFC card*, with a key loaded.
-- **Load:** *Load key from NFC card*, on the first menu.
-
-Both entries only appear while the reader answers on the bus. Unplug it and
-they are gone.
+encrypted with a password, and load it back.
 
 ### Wiring
 
-The reader goes on the board's I2C bus, next to the touch controller:
+The reader goes on the board's I2C bus, next to the touch controller. It has a
+Grove cable with four wires:
 
-| RFID Unit 2 (Grove) | Board |
+| RFID Unit 2 (Grove wire) | Board |
 |---|---|
 | SDA (yellow) | **GPIO7** |
 | SCL (white) | **GPIO8** |
 | VCC (red) | **3V3**, not 5 V |
 | GND (black) | GND |
 
-It answers at address `0x28`, which collides with nothing on the board.
+Power it from **3.3 V**. The Grove plug is usually fed with 5 V, but the reader
+chip and the board both work at 3.3 V, and its data lines must not be pulled
+above that.
+
+The reader answers at I2C address `0x28`, which collides with nothing on the
+board.
+
+### Turn it on
+
+NFC is **off** after flashing. To turn it on:
+
+1. **Device settings → Communication → NFC card reader**.
+2. Tap **Test the reader**. It says whether the reader answers. Hold a card
+   against it and it also says what kind of card it is and whether it is
+   blank. The test only reads; it never writes to the card.
+3. Tap **Enable NFC**.
+
+If the test says no reader was found, check the four wires.
+
+With NFC enabled and the reader plugged in, two entries appear:
+
+- **Save:** Settings → *Save key to NFC card*, with a key loaded.
+- **Load:** *Load key from NFC card*, on the first menu.
+
+They disappear when the reader is unplugged or NFC is disabled. The antenna is
+on only while a screen is asking for a card.
+
+### Which cards to use
+
+Use 13.56 MHz cards of one of these two families. Cards, key fobs, stickers and
+rings all work the same; only the chip inside matters.
+
+| Card | Works | Notes |
+|---|---|---|
+| **MIFARE Classic 1K** (S50) | yes | The cards and fobs sold with the reader. The usual choice |
+| MIFARE Classic 4K (S70) | yes | Used like a 1K |
+| **NTAG213 / NTAG215 / NTAG216** | yes | The common "NFC tag" stickers. NTAG213 is big enough |
+| MIFARE Ultralight (48 bytes) | no | Too small: a backup needs 61 to 77 bytes |
+| MIFARE DESFire, MIFARE Plus, NTAG 424 | no | Different protocol |
+| Bank cards, passports, phones | no | Different protocol |
+| 125 kHz fobs (EM4100, HID Prox) | no | Different frequency; the reader does not see them |
+
+A card that is not supported reads as if no card were there.
+
+Before you use a card:
+
+- **Use a blank one.** Saving a key replaces whatever record is on the card.
+  Specter asks first if it finds one.
+- **A MIFARE Classic that was formatted by a phone has to be erased first.**
+  Phones format cards as NDEF, which changes the card's keys, and then the
+  card reads as unreadable. An NFC app's "erase" or "format" option puts the
+  factory keys back.
+- **A locked or password-protected tag cannot be written.**
+- **A phone shows a Specter card as empty.** The record is not NDEF, so NFC
+  apps do not recognise it. That says nothing about whether the save worked;
+  load the card on the device to check.
 
 ### What is on the card
 
 The 12 to 24 words are turned into their BIP39 entropy, sealed in a KEF
 envelope (the Krux encryption format: AES-256-GCM, key from PBKDF2-HMAC-SHA256
-with 100,000 rounds) and written as one record. The words never go over the antenna, and nothing
-unencrypted is written.
+with 100,000 rounds) and written as one record. The words never go over the
+antenna, and nothing unencrypted is written.
 
 The record layout and the envelope are the ones used by the NFC branches of
 [Kern](https://github.com/sandman21vs/Kern/blob/nfc-card-storage/docs/nfc.md)
@@ -147,17 +197,15 @@ Things to know:
 
 - **The password is the only protection.** The card answers any reader held
   near it, so anyone who gets the card can copy it and try passwords offline.
+  Use a long one.
 - **The passphrase is not on the card.** After loading, enter it again.
-- **Cards:** MIFARE Classic 1K/4K (the ones sold with the reader) and NTAG21x.
-  A plain 48-byte Ultralight is too small.
-- **A phone shows the card as empty.** The record is not NDEF. A MIFARE Classic
-  card that was formatted as NDEF has to be erased with a tag tool first, or it
-  reads as blank.
-- The antenna is on only while the "hold the card" screen is up.
+- **The backup ID** shown when saving and loading is the fingerprint of the key
+  without a passphrase.
 
-If it does not work, copy [`ports/esp32p4/test_nfc.py`](./ports/esp32p4/test_nfc.py)
-to the board and run `test_nfc.run()` from the serial console. It says which
-step fails: the bus, the reader, the card or the record.
+If **Test the reader** is not enough to find a problem, copy
+[`ports/esp32p4/test_nfc.py`](./ports/esp32p4/test_nfc.py) to the board and run
+`test_nfc.run()` from the serial console. It says which step fails: the bus,
+the reader, the card or the record.
 
 ## Build and flash
 
