@@ -29,6 +29,7 @@ Every item below was tested on the board.
 | Battery level | working, three states |
 | Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
 | Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | working, **experimental** |
+| Smartcard keystore over NFC, with the [same reader](#smartcard-over-nfc-experimental) | working, **experimental**, position sensitive |
 | Hardware random number generator | working |
 | ESP32-C6 radio | held in reset (airgapped by design) |
 | Secure boot / flash encryption / secure wipe | **not implemented** |
@@ -101,6 +102,61 @@ and run it from the serial console. It says which step fails: the reader, the
 card, the ATR or the command exchange. If the reader does not answer, the two
 wires are most likely swapped.
 
+## Smartcard over NFC (experimental)
+
+> **Proof of concept.** It worked on the board in the first trials and has had
+> very little use. The reader's antenna is small: the card has to rest on the
+> right spot and stay still, and finding that spot takes some trying.
+
+The Specter smartcard (a JavaCard with the MemoryCard applet) can be read by
+the [NFC reader](#nfc-card-reader-optional-experimental) instead of the
+[smartcard hat](#smartcard-hat-optional). It is the same card, the same PIN
+and the same stored key: a card set up through the hat works over NFC, and the
+other way round.
+
+Wire the reader as described in the next section. Then:
+
+1. **Device settings → Communication → NFC card reader → Use the smartcard
+   over NFC**, and restart.
+2. The first time, the device asks for the card before the PIN screen, to
+   learn which card it is. Hold it against the reader until the screen moves
+   on.
+3. Type the PIN with the card away, then hold the card against the reader once
+   more.
+
+From then on a start is the PIN and one tap. *Load key from smartcard* does
+not need the card again, and each change in *Smartcard storage* is one tap
+(two to save a key). The antenna is on only while a screen is asking for the
+card. Cancelling the first tap starts the device without the smartcard.
+
+What to know:
+
+- **Where the card goes.** On the reader module, not behind the board. Over
+  the edge of the card usually works better than over its centre. If the card
+  slips, the screen says so and waits for it again.
+- **A card with a key in the hat's slot wins.** NFC is used only when the slot
+  is empty.
+- **The device remembers one card.** Its public key is kept in flash, so that
+  the PIN screen can show the anti-phishing words before the card is there.
+  The tap that follows proves the card owns that key, and a different card is
+  refused before it sees the PIN. To use another card, hold it again when
+  asked: it is then learned as a new card, with one extra tap and different
+  words.
+- **The PIN stays in memory while the device is unlocked,** because the card
+  locks itself every time it leaves the reader. Locking the device forgets it.
+- **A key saved as "Encrypt" only reads back on the device that saved it,**
+  and not after that device is wiped. Such a card can be cleared or
+  overwritten from *Smartcard storage*.
+- **Backup cards and the smartcard do not mix.** MIFARE and NTAG cards are
+  only ever used for the encrypted backup below, and the smartcard only for
+  the keystore.
+
+If the card is not found, copy
+[`ports/esp32p4/test_nfc_javacard.py`](./ports/esp32p4/test_nfc_javacard.py)
+to the board and run `test_nfc_javacard.go()` from the serial console. It
+shows live whether the card answers, so you can find the spot, and then opens
+the secure channel twenty times and says where it stops if it does.
+
 ## NFC card reader (optional, experimental)
 
 > **Proof of concept. Do not rely on it for a real key yet.** Saving a key to
@@ -165,7 +221,9 @@ rings all work the same; only the chip inside matters.
 | Bank cards, passports, phones | no | Different protocol |
 | 125 kHz fobs (EM4100, HID Prox) | no | Different frequency; the reader does not see them |
 
-A card that is not supported reads as if no card were there.
+A card that is not supported is not written to. The screen says so when it
+recognises one, such as a smartcard; anything else reads as if no card were
+there.
 
 Before you use a card:
 

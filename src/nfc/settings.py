@@ -83,15 +83,27 @@ async def test_reader(gui):
     return True
 
 
-async def settings_menu(gui, enabled, save):
-    """Shows the NFC settings. save(bool) stores the switch."""
+async def settings_menu(gui, enabled, save, smartcard=None):
+    """Shows the NFC settings. save(bool) stores the switch.
+
+    smartcard is (is_on, set_on) for using the Specter smartcard over NFC. It
+    is a switch of its own, kept outside the settings, because it is read at
+    boot before the settings can be decrypted.
+    """
     while True:
+        buttons = [
+            (None, "NFC is ON" if enabled else "NFC is OFF"),
+            (1, "Disable NFC" if enabled else "Enable NFC"),
+            (2, "Test the reader"),
+        ]
+        if smartcard is not None:
+            on = smartcard[0]()
+            buttons += [
+                (None, "Smartcard over NFC is ON" if on else "Smartcard over NFC is OFF"),
+                (3, "Stop using the smartcard over NFC" if on else "Use the smartcard over NFC"),
+            ]
         item = await gui.menu(
-            [
-                (None, "NFC is ON" if enabled else "NFC is OFF"),
-                (1, "Disable NFC" if enabled else "Enable NFC"),
-                (2, "Test the reader"),
-            ],
+            buttons,
             title="NFC card reader",
             note="M5Stack RFID Unit 2 on GPIO7 (SDA) and GPIO8 (SCL)",
             last=(255, None),
@@ -100,6 +112,23 @@ async def settings_menu(gui, enabled, save):
             return enabled
         if item == 2:
             await test_reader(gui)
+        elif item == 3:
+            if on:
+                smartcard[1](False)
+            elif await gui.prompt(
+                "Use the smartcard over NFC?",
+                "The Specter smartcard (JavaCard) can be read by the NFC reader "
+                "instead of the contact reader.\n\n"
+                "From the next start the device asks for the card: hold it "
+                "against the reader, type the PIN, hold it once more.\n\n"
+                "The card has to rest on the right spot of the reader "
+                "and stay still. This is experimental.",
+            ):
+                smartcard[1](True)
+                await gui.alert(
+                    "Smartcard over NFC",
+                    "It takes effect the next time the device starts.",
+                )
         elif item == 1:
             if not enabled and not await gui.prompt(
                 "Enable NFC?",

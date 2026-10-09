@@ -5,6 +5,7 @@ from gui.specter import SpecterGUI
 from keystore.core import KeyStore
 from keystore.sdcard import SDKeyStore
 from keystore.memorycard import MemoryCard
+from keystore.nfccard import NFCMemoryCard
 
 from hosts import SDHost, QRHost, USBHost, Host
 import platform
@@ -79,8 +80,11 @@ def main(apps=None, network="main", keystore_cls=None):
     if keystore_cls is not None:
         keystores = [keystore_cls]
     else:
+        # First one available wins: a card in the contact reader, then a
+        # smartcard over NFC if that was switched on, then the SD card.
         keystores = [
             MemoryCard,
+            NFCMemoryCard,
             SDKeyStore,
         ]
 

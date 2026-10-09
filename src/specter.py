@@ -28,6 +28,7 @@ from gui.screens.mnemonic import MnemonicPrompt
 # small helper functions
 from helpers import gen_mnemonic, fix_mnemonic
 from errors import BaseError
+from keystore.core import KeyStoreUnavailable
 
 
 class SpecterError(BaseError):
@@ -175,17 +176,25 @@ class Specter:
 
     async def setup(self):
         try:
-            # check if the user already selected the keystore class
-            if self.keystore is None:
-                await self.select_keystore()
+            while True:
+                # check if the user already selected the keystore class
+                if self.keystore is None:
+                    await self.select_keystore()
 
-            if self.keystore is not None:
-                self.load_network(self.path, self.network)
+                if self.keystore is not None:
+                    self.load_network(self.path, self.network)
 
-            # load secrets
-            await self.keystore.init(self.gui.show_screen(), self.gui.show_loader)
-            # unlock with PIN or set up the PIN code
-            await self.unlock()
+                try:
+                    # load secrets
+                    await self.keystore.init(self.gui.show_screen(), self.gui.show_loader)
+                    # unlock with PIN or set up the PIN code
+                    await self.unlock()
+                    break
+                except KeyStoreUnavailable:
+                    # this one bowed out: the next in line gets its turn
+                    skipped = type(self.keystore)
+                    self.keystores = [k for k in self.keystores if k is not skipped]
+                    self.keystore = None
         except Exception as e:
             next_fn = await self.handle_exception(e, self.setup)
             await next_fn()
@@ -365,7 +374,12 @@ class Specter:
             BaseApp.GLOBAL = settings
             self.save_settings(settings)
 
-        await settings_menu(self.gui, self.nfc_enabled(), save)
+        from keystore import nfccard
+
+        await settings_menu(
+            self.gui, self.nfc_enabled(), save,
+            smartcard=(nfccard.is_enabled, nfccard.set_enabled),
+        )
 
     async def load_mnemonic_from_nfc(self):
         from nfc.seed import load_mnemonic

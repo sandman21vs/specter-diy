@@ -6,6 +6,8 @@ Two models, stacked the way the hardware is:
             register set - FIFO, command register, IRQ flags, CRC coprocessor.
   SimCard   a tag as the reader sees it: ISO14443A frames in, frames out.
             MIFARE Classic 1K or Ultralight/NTAG.
+  IsoDepCard  a smartcard: the same selection, then RATS and ISO 14443-4
+            blocks carrying APDUs to an applet.
 
 The driver and the tag layer run unmodified against them. The models keep the
 behaviours the real parts punish mistakes with: a halted card ignores REQA, a
@@ -154,6 +156,110 @@ class SimCard:
         return NAK
 
 
+class IsoDepCard(SimCard):
+    """An ISO 14443-4 card (SAK 0x20) running one applet.
+
+    applet is called with each complete command APDU and returns the response
+    APDU. The knobs model what a real card does to a reader: ask for more time,
+    chain a long answer, lose a frame, or brown out in the middle of a command.
+    tamper, when set, rewrites every protocol block on its way out (CRC is
+    added after it) and is how the tests build a hostile card.
+    """
+
+    def __init__(self, applet, uid=b"\x04\x3e\x19\x6a\xa6\x6e\x80",
+                 ats=b"\x05\x78\x80\x70\x02", inf_size=61):
+        self.applet = applet
+        self.ats = bytes(ats)
+        self.inf_size = inf_size  # largest INF the card puts in one I-block
+        self.wtx = 0  # S(WTX) requests before each answer
+        self.wtxm = 1
+        self.mute = 0  # protocol frames to swallow, as if lost in the air
+        self.brownout_ins = None  # INS that makes the card lose power
+        self.tamper = None
+        self.apdus = []  # complete command APDUs received, in order
+        super().__init__(uid=uid, sak=0x20)
+
+    def reset(self):
+        super().reset()
+        # the applet loses its RAM with the field
+        if hasattr(self.applet, "reset"):
+            self.applet.reset()
+        self.protocol = False
+        self.bn = 1
+        self.rx = b""
+        self.tx = b""
+        self.wtx_left = 0
+        self.last = None
+
+    def exchange(self, frame, bits, encrypted):
+        frame = bytes(frame)
+        if not self.protocol:
+            if (self.selected and not bits and len(frame) == 4
+                    and frame[0] == 0xE0 and crc_a(frame[:2]) == frame[2:]):
+                self.protocol = True
+                self.fsd = (16, 24, 32, 40, 48, 64, 96, 128, 256)[min(frame[1] >> 4, 8)]
+                return self.ats + crc_a(self.ats), 0
+            return super().exchange(frame, bits, encrypted)
+
+        # In the protocol state the card ignores WUPA and anything malformed
+        if bits or len(frame) < 3 or crc_a(frame[:-2]) != frame[-2:]:
+            return None
+        if self.mute:
+            self.mute -= 1
+            return None
+        reply = self._block(frame[0], frame[1:-2])
+        if reply is None:
+            return None
+        if self.tamper is not None:
+            reply = self.tamper(reply)
+            if reply is None:
+                return None
+        return reply + crc_a(reply), 0
+
+    def _send(self):
+        """The next block of the answer: a WTX request or an I-block"""
+        if self.wtx_left:
+            self.wtx_left -= 1
+            return bytes([0xF2, self.wtxm])
+        size = min(self.inf_size, self.fsd - 3)
+        chunk, self.tx = self.tx[:size], self.tx[size:]
+        self.last = bytes([0x02 | (0x10 if self.tx else 0) | self.bn]) + chunk
+        return self.last
+
+    def _block(self, pcb, inf):
+        if pcb == 0xC2:  # S(DESELECT)
+            self.reset()
+            self.halted = True
+            return b"\xC2"
+        if pcb == 0xF2:  # S(WTX) response
+            return self._send()
+        if pcb & 0xE6 == 0xA2:  # R-block
+            if pcb & 0x10:  # NAK
+                if pcb & 1 == self.bn:
+                    return self.last
+                return bytes([0xA2 | self.bn])
+            if pcb & 1 == self.bn:
+                return self.last
+            self.bn ^= 1
+            return self._send()
+        if pcb & 0xE6 == 0x02:  # I-block
+            self.bn ^= 1
+            self.rx += inf
+            if pcb & 0x10:
+                self.last = bytes([0xA2 | self.bn])
+                return self.last
+            apdu, self.rx = self.rx, b""
+            self.apdus.append(apdu)
+            if self.brownout_ins is not None and len(apdu) > 1 and apdu[1] == self.brownout_ins:
+                # Supply collapsed mid-command: back to idle, nothing sent
+                self.reset()
+                return None
+            self.tx = bytes(self.applet(apdu))
+            self.wtx_left = self.wtx
+            return self._send()
+        return None
+
+
 class SimChip:
     """The reader, as an I2C device. Has the shape of machine.I2C."""
 
@@ -262,6 +368,7 @@ class SimChip:
 
     def _transceive(self, tx_bits):
         frame, self.fifo = bytes(self.fifo), bytearray()
+        self.reg[0x06] = 0  # ErrorReg is cleared when a command starts
         reply = None
         if self.card is not None and self.field_on:
             reply = self.card.exchange(frame, tx_bits, self.crypto_on)
@@ -270,5 +377,7 @@ class SimChip:
             return
         data, rx_bits = reply
         self.fifo = bytearray(data[:FIFO_SIZE])
+        if len(data) > FIFO_SIZE:
+            self.reg[0x06] = 0x10  # BufferOvfl
         self.reg[0x0C] = rx_bits
         self._irq(0x20)
