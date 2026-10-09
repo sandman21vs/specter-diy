@@ -480,3 +480,66 @@ cegas, então `camera.stage()` reporta em que etapa a inicialização parou. Foi
 ele que revelou a falha em `open`: o sensor respondia no I²C mas o dispositivo
 V4L2 não existia, porque faltava `CONFIG_CAMERA_OV5647=y` e o driver do sensor
 nem era compilado.
+
+## NFC — backup da seed em cartão
+
+Leitor **M5Stack RFID Unit 2** (WS1850S) no I²C da placa. Salva a seed cifrada
+num cartão e carrega de volta. **Ainda não rodou na placa com leitor de
+verdade**: passou nos testes contra leitor e cartões simulados, e sob o
+MicroPython da porta unix, só isso.
+
+### Camadas
+
+| Arquivo | O que sabe |
+|---|---|
+| `components/p4board/i2c.c` | empresta o barramento I²C do touch |
+| `lib/nfc_ws1850s.py` | o chip: registradores, quadros ISO14443A, CRC, crypto1 |
+| `src/nfc/__init__.py` | o cartão: seleção, endereçamento linear, registro `KRN1` |
+| `src/kef.py` | o envelope cifrado (KEF, o formato do Krux) |
+| `src/nfc/seed.py` | os dois fluxos de tela: salvar e carregar |
+
+O código do Kern (`components/nfc`, C sobre ESP-IDF 6) entra como referência
+traduzida, como o resto do port. A tradução para MicroPython partiu do fork do
+Krux, que já tinha a mesma pilha em Python.
+
+### O barramento já tem dono
+
+GPIO7/8 é o I²C do touch e da câmera, aberto pelo `p4board` em C. Um
+`machine.I2C` nos mesmos pinos falha com a porta já adquirida. Por isso o
+`p4board` ganhou três funções que emprestam o barramento:
+
+```python
+p4board.i2c_probe(0x28)             # True se alguém responde; não loga nada
+p4board.i2c_writeto(0x28, b"...")
+p4board.i2c_readfrom(0x28, 16)
+```
+
+`i2c_probe` é o que decide, a cada vez que um menu é montado, se as opções de
+NFC aparecem. Sem o módulo ligado elas somem e nada de NFC roda.
+
+### GCM sem GCM
+
+O `cryptolib` do MicroPython só tem ECB e CBC. O KEF usa também CTR e GCM, e o
+padrão do Kern e do Krux é GCM. Os dois modos são construídos em Python sobre a
+cifra de um bloco em ECB: o contador do CTR e o GHASH do GCM. Um backup tem no
+máximo três blocos, então o custo é irrelevante perto do PBKDF2.
+
+Conferido de três jeitos: contra os vetores da suíte do Krux, contra envelopes
+gerados pelo `kef.py` do Krux nas doze versões, e contra o AES-GCM do pacote
+`cryptography`.
+
+### Testar na placa
+
+```sh
+mpremote cp ports/esp32p4/test_nfc.py :/test_nfc.py
+mpremote exec "import test_nfc; test_nfc.run()"        # só lê
+mpremote exec "import test_nfc; test_nfc.roundtrip()"  # ESCREVE um registro de teste
+```
+
+### O que falta
+
+- Rodar na placa: alcance em 3,3 V, tempo do PBKDF2 de 100.000 rodadas, e se o
+  leitor convive com o touch e a câmera no mesmo barramento.
+- Descritores de carteira no cartão (tipo 2 do formato), como o Kern faz.
+- Apagar um cartão.
+

@@ -28,6 +28,7 @@ Every item below was tested on the board.
 | USB with Specter Desktop / HWI (native USB port) | working |
 | Battery level | working, three states |
 | Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
+| Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | **experimental, not yet tested on the board** |
 | Hardware random number generator | working |
 | ESP32-C6 radio | held in reset (airgapped by design) |
 | Secure boot / flash encryption / secure wipe | **not implemented** |
@@ -99,6 +100,65 @@ If the card is not found, copy
 and run it from the serial console. It says which step fails: the reader, the
 card, the ATR or the command exchange. If the reader does not answer, the two
 wires are most likely swapped.
+
+## NFC card reader (optional, experimental)
+
+> **Proof of concept. Do not rely on it for a real key yet.** It has passed its
+> tests against a simulated reader and simulated cards, and it builds into the
+> firmware, but it has **not been run on the board with a real reader**. It has
+> had no security review. Keep another backup.
+
+With an **[M5Stack RFID Unit 2](https://shop.m5stack.com/products/rfid-unit-2-ws1850s)**
+(WS1850S) plugged in, Specter can save the recovery phrase to an NFC card,
+encrypted with a password, and load it back:
+
+- **Save:** Settings → *Save key to NFC card*, with a key loaded.
+- **Load:** *Load key from NFC card*, on the first menu.
+
+Both entries only appear while the reader answers on the bus. Unplug it and
+they are gone.
+
+### Wiring
+
+The reader goes on the board's I2C bus, next to the touch controller:
+
+| RFID Unit 2 (Grove) | Board |
+|---|---|
+| SDA (yellow) | **GPIO7** |
+| SCL (white) | **GPIO8** |
+| VCC (red) | **3V3**, not 5 V |
+| GND (black) | GND |
+
+It answers at address `0x28`, which collides with nothing on the board.
+
+### What is on the card
+
+The 12 to 24 words are turned into their BIP39 entropy, sealed in a KEF
+envelope (the Krux encryption format: AES-256-GCM, key from PBKDF2-HMAC-SHA256
+with 100,000 rounds) and written as one record. The words never go over the antenna, and nothing
+unencrypted is written.
+
+The record layout and the envelope are the ones used by the NFC branches of
+[Kern](https://github.com/sandman21vs/Kern/blob/nfc-card-storage/docs/nfc.md)
+and [Krux](https://github.com/sandman21vs/krux), so a card written by one is
+meant to load on the others. Specter reads every KEF version and writes
+AES-GCM.
+
+Things to know:
+
+- **The password is the only protection.** The card answers any reader held
+  near it, so anyone who gets the card can copy it and try passwords offline.
+- **The passphrase is not on the card.** After loading, enter it again.
+- **Cards:** MIFARE Classic 1K/4K (the ones sold with the reader) and NTAG21x.
+  A plain 48-byte Ultralight is too small.
+- **A phone shows the card as empty.** The record is not NDEF. A MIFARE Classic
+  card that was formatted as NDEF has to be erased with a tag tool first, or it
+  reads as blank.
+- The antenna is on only while the "hold the card" screen is up.
+
+If it does not work, copy [`ports/esp32p4/test_nfc.py`](./ports/esp32p4/test_nfc.py)
+to the board and run `test_nfc.run()` from the serial console. It says which
+step fails: the bus, the reader, the card or the record.
 
 ## Build and flash
 
@@ -233,6 +293,9 @@ Design notes, pin maps and every problem found along the way are in
 - [odudex/Kern](https://github.com/odudex/Kern) and
   [odudex/k_quirc](https://github.com/odudex/k_quirc): Waveshare 4.3 BSP, camera
   pipeline, QR decoder and the web flasher
+- [odudex/Kern](https://github.com/odudex/Kern) (NFC branch) and
+  [selfcustody/krux](https://github.com/selfcustody/krux): the NFC card format,
+  the WS1850S driver and the KEF encryption format, translated to MicroPython
 - [diybitcoinhardware/f469-disco](https://github.com/diybitcoinhardware/f469-disco):
   LVGL, `embit` and the other shared libraries
 
@@ -307,6 +370,15 @@ make test
 
 The build system will fetch the necessary submodules and compile the simulator
 before executing the tests.
+
+The KEF and NFC tests need no simulator and no hardware. They run on plain
+Python against a simulated reader and simulated cards:
+
+```
+pip install cryptography embit
+python3 -m unittest discover -s test/tests_native -p "test_kef.py"
+python3 -m unittest discover -s test/tests_native -p "test_nfc*.py"
+```
 
 ## USB communication on Linux
 
