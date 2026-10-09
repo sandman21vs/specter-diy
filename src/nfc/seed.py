@@ -17,7 +17,7 @@ from errors import BaseError
 from gui.screens import Progress
 
 import kef
-from . import NFC, NFCError, NFCNotFound, NFCSizeError, RECORD_KEF
+from . import NFC, NFCError, NFCNotFound, NFCSizeError, NFCWrongCard, RECORD_KEF
 
 # How often an empty field is asked again. Each look is a handful of I2C
 # transfers and a 25 ms wait for a card that is not there.
@@ -27,6 +27,7 @@ POLL_MS = 150
 ENTROPY_SIZES = (16, 20, 24, 28, 32)
 
 CARD_HINT = "Hold the card against the NFC reader\nand keep it still."
+WRONG_CARD_HINT = "This card can not hold a backup.\nUse a MIFARE Classic or NTAG card."
 
 
 class NFCStorageError(BaseError):
@@ -52,6 +53,12 @@ async def wait_for_card(gui, nfc, title, message=CARD_HINT):
     while scr.waiting:
         try:
             return nfc.poll()
+        except NFCWrongCard:
+            # a smartcard, or a family that is not a backup card
+            try:
+                scr.message.set_text(WRONG_CARD_HINT)
+            except Exception:
+                pass
         except NFCNotFound:
             pass
         await asyncio.sleep_ms(POLL_MS)

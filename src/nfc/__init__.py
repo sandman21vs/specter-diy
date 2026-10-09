@@ -48,6 +48,14 @@ class NFCSizeError(NFCError):
     """A reply did not fit its buffer, or a payload does not fit the tag"""
 
 
+class NFCTimeout(NFCError):
+    """The deadline passed with no frame from the card"""
+
+
+class NFCWrongCard(NFCNotFound):
+    """A card answered, but it is not of a family this caller talks to"""
+
+
 # No frame may exceed the reader FIFO. A CRC_A is two bytes, and receive
 # buffers must have room for it, because the CRC arrives with the frame.
 FIFO_SIZE = 64
@@ -85,6 +93,10 @@ CMD_UL_WRITE = 0xA2
 # different layout and a seed needs a fraction of the first sixteen anyway.
 SAK_CLASSIC = (0x08, 0x18, 0x88)
 SAK_ULTRALIGHT = 0x00
+# ISO 14443-4: a smartcard. It is never treated as a memory tag, even when it
+# also claims MIFARE emulation (0x28, 0x38) - nothing here writes blocks to a
+# card that runs applets. Smartcards are spoken to in isodep.py.
+SAK_ISO_DEP_BIT = 0x20
 SAK_CASCADE_BIT = 0x04
 CASCADE_TAG = 0x88
 
@@ -115,10 +127,16 @@ class Reader:
     knows what a record is.
 
     Subclasses implement init, deinit, field, transceive, calc_crc,
-    authenticate and clear_crypto, and keep `ready` up to date.
+    authenticate, clear_crypto and set_timeout, and keep `ready` up to date.
     """
 
     ready = False
+
+    def set_timeout(self, timeout_ms=None):
+        """How long transceive waits for a reply. None is the short default
+        that suits memory tags; a smartcard states its own frame waiting time
+        and may take seconds."""
+        raise NotImplementedError
 
     def init(self):
         """Brings the chip up with the field off. Idempotent."""
@@ -342,6 +360,34 @@ class NFC:
             capacity = pages[2] * 8
         return max(UL_MIN_CAPACITY, min(capacity, UL_MAX_CAPACITY))
 
+    def select(self):
+        """Wakes one card and selects it, returning (uid, sak).
+
+        Any family: what the card is and whether to talk to it is the
+        caller's decision, made on the SAK.
+        """
+        # WUPA rather than REQA, as a 7 bit frame: release() just halted
+        # whatever was there, and a halted tag answers WUPA but ignores REQA,
+        # which would make the card unselectable while it stays in the field.
+        atqa, bits = self.reader.transceive(bytes([CMD_WUPA]), 7, 2)
+        # Two whole bytes. With a strong field the receiver hands back a few
+        # bits of noise, and that is not a card.
+        if len(atqa) != 2 or bits:
+            raise NFCError("Bad ATQA")
+
+        uid, sak = self._cascade(CMD_SEL_CL1)
+        if sak & SAK_CASCADE_BIT:
+            # Double size UID: the first byte of level 1 is the cascade tag,
+            # not UID data. Ten byte UIDs are refused, not guessed at.
+            if uid[0] != CASCADE_TAG:
+                raise NFCError("Unsupported UID")
+            head = uid[1:4]
+            uid, sak = self._cascade(CMD_SEL_CL2)
+            if sak & SAK_CASCADE_BIT:
+                raise NFCError("Unsupported UID")
+            uid = head + uid
+        return uid, sak
+
     def poll(self):
         """Wakes, identifies and selects one tag.
 
@@ -353,26 +399,9 @@ class NFC:
         self.release()
 
         try:
-            # WUPA rather than REQA, as a 7 bit frame: release() just halted
-            # whatever was there, and a halted tag answers WUPA but ignores
-            # REQA, which would make the card unselectable while it stays in
-            # the field.
-            atqa, _ = self.reader.transceive(bytes([CMD_WUPA]), 7, 2)
-            if len(atqa) != 2:
-                raise NFCError("Bad ATQA")
-
-            uid, sak = self._cascade(CMD_SEL_CL1)
-            if sak & SAK_CASCADE_BIT:
-                # Double size UID: the first byte of level 1 is the cascade
-                # tag, not UID data. Ten byte UIDs are refused, not guessed at.
-                if uid[0] != CASCADE_TAG:
-                    raise NFCError("Unsupported UID")
-                head = uid[1:4]
-                uid, sak = self._cascade(CMD_SEL_CL2)
-                if sak & SAK_CASCADE_BIT:
-                    raise NFCError("Unsupported UID")
-                uid = head + uid
-
+            uid, sak = self.select()
+            if sak & SAK_ISO_DEP_BIT:
+                raise NFCWrongCard("Smartcard")
             if sak in SAK_CLASSIC:
                 kind = CLASSIC
                 capacity = MF_DATA_BLOCKS * MF_BLOCK_SIZE
@@ -380,7 +409,10 @@ class NFC:
                 kind = ULTRALIGHT
                 capacity = self._ultralight_capacity()
             else:
-                raise NFCError("Unsupported card")
+                raise NFCWrongCard("Unsupported card")
+        except NFCWrongCard:
+            self.release()
+            raise
         except NFCError:
             self.release()
             raise NFCNotFound("No card")

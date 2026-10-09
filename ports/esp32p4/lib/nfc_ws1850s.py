@@ -24,7 +24,7 @@ nfc-card-storage) e de krux/nfc_ws1850s.py, ambos MIT.
 
 import time
 
-from nfc import FIFO_SIZE, NFCError, NFCNotFound, NFCSizeError, Reader
+from nfc import FIFO_SIZE, NFCError, NFCNotFound, NFCSizeError, NFCTimeout, Reader
 
 WS1850S_ADDR = 0x28
 
@@ -75,6 +75,18 @@ _EXCHANGE_TIMEOUT_MS = 60
 _CRC_TIMEOUT_MS = 20
 _MAX_POLLS = 4000
 
+# Com um prazo pedido por set_timeout() o timer do chip sai do caminho: fica no
+# mais longo que ele tem (prescaler 0xFFF, 604 us por tick, ~40 s) e quem conta
+# o tempo e o relogio do P4. Foi assim que o JavaCard foi validado na placa.
+_TIMER_STOCK = ((_REG_T_MODE, 0x80), (_REG_T_PRESCALER, 0xA9),
+                (_REG_T_RELOAD_H, 0x03), (_REG_T_RELOAD_L, 0xE8))
+_TIMER_LONG = ((_REG_T_MODE, 0x8F), (_REG_T_PRESCALER, 0xFF),
+               (_REG_T_RELOAD_H, 0xFF), (_REG_T_RELOAD_L, 0xFF))
+# Teto de qualquer prazo pedido: o maior FWT da ISO 14443-4, com folga.
+_MAX_TIMEOUT_MS = 5100
+# Folga sobre o prazo pedido: o leitor e consultado por I2C, nao por interrupcao.
+_TIMEOUT_MARGIN_MS = 20
+
 
 class _BoardBus:
     """O barramento I2C da placa, emprestado pelo p4board.
@@ -117,6 +129,7 @@ class WS1850S(Reader):
         self.addr = addr
         self.ready = False
         self.crypto_on = False
+        self.timeout_ms = None  # None: os 25 ms do timer do chip
 
     # ---------- Registradores ----------
 
@@ -188,15 +201,12 @@ class WS1850S(Reader):
 
         # Timer: TAuto, prescaler 0xA9 -> 40 kHz, reload 1000 -> 25 ms por
         # troca. E o que impede um cartao mudo de travar uma leitura.
-        for reg, val in (
-            (_REG_T_MODE, 0x80),
-            (_REG_T_PRESCALER, 0xA9),
-            (_REG_T_RELOAD_H, 0x03),
-            (_REG_T_RELOAD_L, 0xE8),
+        for reg, val in _TIMER_STOCK + (
             (_REG_TX_ASK, 0x40),  # forca 100% ASK
             (_REG_MODE, 0x3D),  # preset do CRC 0x6363
         ):
             self._write(reg, val)
+        self.timeout_ms = None
 
         self.ready = True
         self.crypto_on = False
@@ -223,6 +233,18 @@ class WS1850S(Reader):
             raise NFCError("Reader not ready")
         self._mask(_REG_TX_CONTROL, 0x03, on)
 
+    def set_timeout(self, timeout_ms=None):
+        """Prazo de resposta das proximas trocas. None volta aos 25 ms."""
+        if not self.ready:
+            raise NFCError("Reader not ready")
+        if timeout_ms is not None:
+            timeout_ms = max(1, min(int(timeout_ms), _MAX_TIMEOUT_MS))
+        # So mexe nos registradores quando muda de modo, nao a cada quadro
+        if (timeout_ms is None) != (self.timeout_ms is None):
+            for reg, val in _TIMER_STOCK if timeout_ms is None else _TIMER_LONG:
+                self._write(reg, val)
+        self.timeout_ms = timeout_ms
+
     def clear_crypto(self):
         """Encerra uma sessao crypto1 se houver. Nunca levanta excecao."""
         if self.crypto_on:
@@ -236,16 +258,22 @@ class WS1850S(Reader):
 
     def _wait_irq(self, mask, timeout_ms):
         """Espera um bit de IRQ, o timer do leitor ou o prazo"""
+        polls = _MAX_POLLS
+        custom = self.timeout_ms is not None
+        if custom:
+            timeout_ms = self.timeout_ms + _TIMEOUT_MARGIN_MS
+            # o teto de consultas acompanha o prazo, mas continua existindo
+            polls += timeout_ms * 20
         start = time.ticks_ms()
-        for _ in range(_MAX_POLLS):
+        for _ in range(polls):
             irq = self._byte(_REG_COM_IRQ)
             if irq & mask:
                 return
-            if irq & _IRQ_TIMER:
+            if irq & _IRQ_TIMER and not custom:
                 break
             if time.ticks_diff(time.ticks_ms(), start) > timeout_ms:
                 break
-        raise NFCError("No answer from tag")
+        raise NFCTimeout("No answer from tag")
 
     def transceive(self, send, tx_last_bits=0, recv_size=0):
         """Troca um quadro, devolve (resposta, rx_last_bits).
