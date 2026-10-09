@@ -259,6 +259,8 @@ class Specter:
         ]
         if self.keystore.is_key_saved and self.keystore.load_button:
             buttons.append((2, self.keystore.load_button))
+        if self.nfc_available():
+            buttons.append((778, "Load key from NFC card"))
         buttons += [(None, "Settings"), (3, "Device settings")]
         # wait for menu selection
         menuitem = await self.gui.menu(buttons)
@@ -289,6 +291,8 @@ class Specter:
             await self.update_devsettings()
         elif menuitem == 777:
             return await self.import_mnemonic()
+        elif menuitem == 778:
+            return await self.load_mnemonic_from_nfc()
         # lock device
         elif menuitem == 5:
             await self.lock()
@@ -324,6 +328,23 @@ class Specter:
         scr = MnemonicPrompt(title="Imported mnemonic:", mnemonic=mnemonic)
         # confirm mnemonic
         if not await self.gui.show_screen()(scr):
+            return
+        return self.set_mnemonic(mnemonic, "")
+
+    def nfc_available(self):
+        """True when an NFC reader is plugged in right now"""
+        try:
+            import nfc
+
+            return nfc.is_available()
+        except Exception:
+            return False
+
+    async def load_mnemonic_from_nfc(self):
+        from nfc.seed import load_mnemonic
+
+        mnemonic = await load_mnemonic(self.gui)
+        if mnemonic is None:
             return
         return self.set_mnemonic(mnemonic, "")
 
@@ -404,6 +425,8 @@ class Specter:
         buttons.append((2, "Enter passphrase"))
         if hasattr(self.keystore, "show_mnemonic"):
             buttons.append((3, "Show recovery phrase"))
+        if getattr(self.keystore, "mnemonic", None) and self.nfc_available():
+            buttons.append((7, "Save key to NFC card"))
         buttons.extend([(None, "Security"), (4, "Device settings")])  # delimiter
         buttons.extend([(None, "About"), (6, "About this device")])
         # wait for menu selection
@@ -432,6 +455,10 @@ class Specter:
             await self.select_network()
         elif menuitem == 6:
             await self.show_about()
+        elif menuitem == 7:
+            from nfc.seed import save_mnemonic
+
+            await save_mnemonic(self.gui, self.keystore.mnemonic)
         else:
             print(menuitem)
             raise SpecterError("Not implemented")
