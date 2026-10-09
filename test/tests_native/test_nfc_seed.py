@@ -50,6 +50,7 @@ try:
     import kef
     import nfc
     from nfc import seed
+    from nfc import settings as nfc_settings
     from nfc_sim import SimCard, SimChip
     from nfc_ws1850s import WS1850S
 
@@ -77,6 +78,7 @@ class FakeGUI:
         self.prompts = list(prompts)
         self.inputs = list(inputs)
         self.cancel_tap = cancel_tap
+        self.menus = []
         self.shown = []
         self.taps = 0
         self.on_tap = None
@@ -91,6 +93,10 @@ class FakeGUI:
 
     async def alert(self, title, msg, button_text="OK", note=None):
         self.shown.append(("alert", title, msg))
+
+    async def menu(self, buttons=(), title="", note=None, last=None):
+        self.shown.append(("menu", title, [text for _, text in buttons]))
+        return self.menus.pop(0)
 
     async def load_screen(self, scr):
         self.shown.append(("screen", scr.title, ""))
@@ -318,6 +324,99 @@ class SeedFlowTest(unittest.TestCase):
             "crush inherit small egg include title slogan mom remain blouse boost bonus",
         )
         self.assertIn("test ID", gui.shown[-1][2])
+
+
+@unittest.skipUnless(READY, "needs the 'embit' and 'cryptography' packages")
+class SettingsTest(unittest.TestCase):
+    def setUp(self):
+        self.chip = SimChip(SimCard())
+        self._open_reader = nfc.open_reader
+        self._is_available = nfc_settings.is_available
+        nfc.open_reader = lambda: WS1850S(i2c=self.chip)
+        nfc_settings.is_available = lambda: self.chip.present
+
+    def tearDown(self):
+        nfc.open_reader = self._open_reader
+        nfc_settings.is_available = self._is_available
+
+    def run_test(self, gui):
+        return asyncio.run(nfc_settings.test_reader(gui))
+
+    def plant(self, payload, record_type):
+        link = nfc.NFC(WS1850S(i2c=self.chip))
+        link.init()
+        link.field(True)
+        link.poll()
+        link.write_record(payload, record_type)
+        link.deinit()
+        self.chip.card.writes.clear()
+
+    def test_no_reader(self):
+        self.chip.present = False
+        gui = FakeGUI()
+        self.assertFalse(self.run_test(gui))
+        self.assertEqual(gui.titles("alert"), ["No NFC reader found"])
+        self.assertIn("GPIO7", gui.shown[-1][2])
+
+    def test_something_else_on_the_bus(self):
+        class Deaf(SimChip):
+            def _write(self, reg, value):
+                pass
+
+        self.chip = Deaf()
+        gui = FakeGUI()
+        self.assertFalse(self.run_test(gui))
+        self.assertEqual(gui.titles("alert"), ["NFC reader error"])
+
+    def test_reader_alone(self):
+        gui = FakeGUI(cancel_tap=True)
+        self.assertTrue(self.run_test(gui))
+        self.assertEqual(gui.titles("screen"), ["The NFC reader works"])
+        self.assertEqual(gui.titles("alert"), [])
+        self.assertFalse(self.chip.field_on)
+
+    def test_card_reports_and_never_writes(self):
+        for prepare, expected in (
+            (lambda: None, "blank"),
+            (lambda: self.plant(bytes(45), nfc.RECORD_KEF), "encrypted key"),
+            (lambda: self.plant(b"wpkh()", nfc.RECORD_DESCRIPTOR), "not a key"),
+        ):
+            self.chip.card = SimCard()
+            prepare()
+            gui = FakeGUI()
+            self.assertTrue(self.run_test(gui))
+            kind, title, message = gui.shown[-1]
+            self.assertEqual(title, "Reader and card work")
+            self.assertIn("MIFARE Classic", message)
+            self.assertIn("UID: 04a1b2c3", message)
+            self.assertIn("704 bytes", message)
+            self.assertIn(expected, message)
+            self.assertEqual(self.chip.card.writes, [])
+            self.assertFalse(self.chip.field_on)
+
+    def test_card_with_other_keys(self):
+        self.chip.card = SimCard(key=b"\xd3\xf7\xd3\xf7\xd3\xf7")
+        gui = FakeGUI()
+        self.assertTrue(self.run_test(gui))
+        self.assertIn("could not be read", gui.shown[-1][2])
+
+    def test_switch(self):
+        saved = []
+        gui = FakeGUI(prompts=[False, True])
+        gui.menus = [1, 1, 1, 255]
+        result = asyncio.run(nfc_settings.settings_menu(gui, False, saved.append))
+        # refused once, switched on, switched off again without being asked
+        self.assertEqual(saved, [True, False])
+        self.assertFalse(result)
+        labels = [buttons[1] for kind, _, buttons in gui.shown if kind == "menu"]
+        self.assertEqual(labels, ["Enable NFC", "Enable NFC", "Disable NFC", "Enable NFC"])
+        self.assertEqual(self.chip.transfers, 0)
+
+    def test_menu_runs_the_test(self):
+        gui = FakeGUI(cancel_tap=True)
+        gui.menus = [2, 255]
+        self.assertTrue(asyncio.run(nfc_settings.settings_menu(gui, True, None)))
+        self.assertEqual(gui.titles("screen"), ["The NFC reader works"])
 
 
 if __name__ == "__main__":

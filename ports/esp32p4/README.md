@@ -497,6 +497,7 @@ cartões simulados, e sob o MicroPython da porta unix.
 | `src/nfc/__init__.py` | o cartão: seleção, endereçamento linear, registro `KRN1` |
 | `src/kef.py` | o envelope cifrado (KEF, o formato do Krux) |
 | `src/nfc/seed.py` | os dois fluxos de tela: salvar e carregar |
+| `src/nfc/settings.py` | a chave liga/desliga e o teste do leitor |
 
 O código do Kern (`components/nfc`, C sobre ESP-IDF 6) entra como referência
 traduzida, como o resto do port. A tradução para MicroPython partiu do fork do
@@ -516,6 +517,17 @@ p4board.i2c_readfrom(0x28, 16)
 
 `i2c_probe` é o que decide, a cada vez que um menu é montado, se as opções de
 NFC aparecem. Sem o módulo ligado elas somem e nada de NFC roda.
+
+### Desligado por padrão
+
+NFC é rádio num dispositivo airgapped, então não liga sozinho. A chave fica em
+**Device settings → Communication → NFC card reader** e é guardada no
+`global.settings`, cifrado como as outras configurações. Desligado, nenhum menu
+oferece cartão e o leitor nunca é inicializado.
+
+A mesma tela tem **Test the reader**: confere o barramento, o leitor e, se um
+cartão for aproximado, diz a família, o UID e se há registro. Só lê. É a única
+coisa que toca o leitor com o NFC desligado, e só quando o usuário pede.
 
 ### GCM sem GCM
 
