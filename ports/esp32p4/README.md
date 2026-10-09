@@ -548,8 +548,57 @@ mpremote exec "import test_nfc; test_nfc.run()"        # só lê
 mpremote exec "import test_nfc; test_nfc.roundtrip()"  # ESCREVE um registro de teste
 ```
 
+### Smartcard por NFC
+
+O JavaCard do Specter (applet MemoryCard) também funciona pelo mesmo leitor, no
+lugar do hat de contato. **Validado no hardware em primeiros testes**: seleção,
+RATS, SELECT do applet e 20 aberturas seguidas do canal seguro (10 no modo `es`,
+10 no `ee`) com o script de diagnóstico, e o desbloqueio com PIN pelo firmware.
+O resto passou só contra o simulador.
+
+| Arquivo | O que sabe |
+|---|---|
+| `lib/nfc_ws1850s.py` | prazo de resposta ajustável por troca (`set_timeout`) |
+| `src/nfc/isodep.py` | ISO 14443-4: RATS, blocos I/R, encadeamento, S(WTX) |
+| `src/nfc/smartcard.py` | a conexão com a interface do `uscard` |
+| `src/keystore/nfccard.py` | o keystore: quando pedir o cartão e o que lembrar |
+| `test_nfc_javacard.py` | diagnóstico na placa, autossuficiente |
+
+O que se mediu no cartão (NXP JCOP, SAK 0x20, ATS `0578777102`): FWT de 39 ms,
+um S(WTX) a cada ~27 ms, 1,0 s para abrir o canal no modo `es` e 1,9 s no `ee`.
+
+Três coisas que moldaram o desenho:
+
+- **A posição é crítica.** A antena do RFID2 é pequena. Num ponto bom o cartão
+  aguenta a curva elíptica; num ponto um pouco pior ele é selecionado, cai no
+  meio do cálculo e fica mudo até o campo ser desligado. Por isso o cartão só é
+  pedido quando é necessário, por poucos segundos, e a tela volta a pedir se ele
+  se perde.
+- **O timer do chip sai do caminho.** Com prazo pedido por `set_timeout`, o
+  timer do WS1850S fica no máximo e quem conta o tempo é o relógio do P4. Foi
+  assim que funcionou na placa; se o timer de 25 ms atrapalharia, não foi
+  medido.
+- **A escolha do keystore acontece antes de o `global.settings` poder ser
+  lido.** A opção de usar o smartcard por NFC mora num arquivo próprio,
+  `/flash/keystore_nfc`, que guarda também a chave pública do último cartão
+  usado. Nenhum dos dois é segredo nem é autenticado: a opção só faz o boot
+  pedir um cartão, e uma chave adulterada muda as palavras anti-phishing e
+  depois falha no canal seguro.
+
+O PIN nunca é reenviado às cegas: se o cartão cai durante o desbloqueio, o
+contador de tentativas é lido antes, e se desceu o PIN já tinha chegado e
+estava errado.
+
+```sh
+mpremote cp ports/esp32p4/test_nfc_javacard.py :/test_nfc_javacard.py
+mpremote exec "import test_nfc_javacard; test_nfc_javacard.go()"   # so le
+```
+
 ### O que falta
 
+- Smartcard por NFC: saber se a antena no máximo (`go(boost=True)`) alarga a
+  margem de posição; lembrar mais de um cartão; confirmar no código do applet
+  que ele se bloqueia ao sair do campo (o keystore não depende disso).
 - Medir na placa: alcance em 3,3 V e tempo do PBKDF2 de 100.000 rodadas.
 - Descritores de carteira no cartão (tipo 2 do formato), como o Kern faz.
 - Apagar um cartão.
