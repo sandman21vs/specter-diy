@@ -120,6 +120,45 @@ static mp_obj_t p4board_radio_off_fn(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(p4board_radio_off_obj, p4board_radio_off_fn);
 
+/* I2C bus shared with the touch, for an external module on GPIO 8/7. */
+static uint8_t i2c_address(mp_obj_t address_in) {
+    mp_int_t address = mp_obj_get_int(address_in);
+    if (address < 0x08 || address > 0x77) {
+        mp_raise_ValueError(MP_ERROR_TEXT("i2c address out of range"));
+    }
+    return (uint8_t)address;
+}
+
+static mp_obj_t p4board_i2c_probe_fn(mp_obj_t address_in) {
+    return mp_obj_new_bool(p4board_i2c_probe(i2c_address(address_in)) == ESP_OK);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(p4board_i2c_probe_obj, p4board_i2c_probe_fn);
+
+static mp_obj_t p4board_i2c_writeto_fn(mp_obj_t address_in, mp_obj_t data_in) {
+    mp_buffer_info_t data;
+    mp_get_buffer_raise(data_in, &data, MP_BUFFER_READ);
+    check(p4board_i2c_write(i2c_address(address_in), data.buf, data.len), "i2c write");
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(p4board_i2c_writeto_obj, p4board_i2c_writeto_fn);
+
+static mp_obj_t p4board_i2c_readfrom_fn(mp_obj_t address_in, mp_obj_t size_in) {
+    mp_int_t size = mp_obj_get_int(size_in);
+    if (size < 1 || size > 256) {
+        mp_raise_ValueError(MP_ERROR_TEXT("i2c read size out of range"));
+    }
+    vstr_t data;
+    vstr_init_len(&data, size);
+    esp_err_t result = p4board_i2c_read(i2c_address(address_in),
+        (uint8_t *)data.buf, size);
+    if (result != ESP_OK) {
+        vstr_clear(&data);
+        check(result, "i2c read");
+    }
+    return mp_obj_new_bytes_from_vstr(&data);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(p4board_i2c_readfrom_obj, p4board_i2c_readfrom_fn);
+
 static const mp_rom_map_elem_t p4board_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),      MP_ROM_QSTR(MP_QSTR_p4board) },
     { MP_ROM_QSTR(MP_QSTR_init),          MP_ROM_PTR(&p4board_init_obj) },
@@ -132,6 +171,9 @@ static const mp_rom_map_elem_t p4board_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_touch),         MP_ROM_PTR(&p4board_touch_obj) },
     { MP_ROM_QSTR(MP_QSTR_touch_address), MP_ROM_PTR(&p4board_touch_address_obj) },
     { MP_ROM_QSTR(MP_QSTR_radio_off),     MP_ROM_PTR(&p4board_radio_off_obj) },
+    { MP_ROM_QSTR(MP_QSTR_i2c_probe),     MP_ROM_PTR(&p4board_i2c_probe_obj) },
+    { MP_ROM_QSTR(MP_QSTR_i2c_writeto),   MP_ROM_PTR(&p4board_i2c_writeto_obj) },
+    { MP_ROM_QSTR(MP_QSTR_i2c_readfrom),  MP_ROM_PTR(&p4board_i2c_readfrom_obj) },
     { MP_ROM_QSTR(MP_QSTR_WIDTH),         MP_ROM_INT(P4BOARD_LCD_WIDTH) },
     { MP_ROM_QSTR(MP_QSTR_HEIGHT),        MP_ROM_INT(P4BOARD_LCD_HEIGHT) },
 };
