@@ -72,11 +72,18 @@ class TransactionScreen(Prompt):
         self.style_warning = style_warning
         self.style_gray = style_gray
 
-        num_change_outputs = 0
+        warning_text = None
+        if "warnings" in meta and len(meta["warnings"]) > 0:
+            warning_text = "WARNING!\n" + "\n".join(meta["warnings"])
+            self.warning = self.add_warning(self.page, warning_text)
+            obj = self.warning
+
         for out in meta["outputs"]:
-            # first only show destination addresses
-            if out["change"] and not out.get("warning", ""):
-                num_change_outputs += 1
+            # Verified change needs no confirmation - the device proved it
+            # can't be an attacker-controlled destination. It stays visible
+            # on the details page. A warning overrides this: it means the
+            # output needs the user's attention.
+            if out["change"] and not out.get("warnings"):
                 continue
             obj = self.show_output(out, obj)
 
@@ -94,16 +101,17 @@ class TransactionScreen(Prompt):
 
             obj = fee
 
-        if "warnings" in meta and len(meta["warnings"]) > 0:
-            text = "WARNING!\n" + "\n".join(meta["warnings"])
-            self.warning = add_label(text, scr=self.page)
-            self.warning.add_style(style_warning, 0)
-            self.warning.align_to(obj, lv.ALIGN.OUT_BOTTOM_MID, 0, 30)
+        page2_warning = None
+        if warning_text:
+            page2_warning = self.add_warning(self.page2, warning_text)
 
         meta_inputs_len = len(meta["inputs"])
         lbl = add_label("%d %s" % (meta_inputs_len, "INPUT" if meta_inputs_len == 1 else "INPUTS"), scr=self.page2)
         lbl.add_style(style, 0)
-        lbl.align(lv.ALIGN.TOP_MID, 0, 30)
+        if page2_warning:
+            lbl.align_to(page2_warning, lv.ALIGN.OUT_BOTTOM_MID, 0, 20)
+        else:
+            lbl.align(lv.ALIGN.TOP_MID, 0, 30)
         obj = lbl
         for i, inp in enumerate(meta["inputs"]):
             idxlbl = lv.label(self.page2)
@@ -189,8 +197,9 @@ class TransactionScreen(Prompt):
             else:
                 addrlbl.add_style(self.style_primary, 0)
             lbl = addrlbl
-            if "warning" in out:
-                text = out["warning"]
+            warning_text = "\n".join(out.get("warnings", []))
+            if warning_text:
+                text = warning_text
                 warning = add_label(text, scr=self.page2)
                 warning.set_style_text_align(lv.TEXT_ALIGN.LEFT, 0)
                 warning.set_width(380)
@@ -244,6 +253,12 @@ class TransactionScreen(Prompt):
 
         self.toggle_details()
 
+    def add_warning(self, page, text):
+        warning = add_label(text, scr=page)
+        warning.add_style(self.style_warning, 0)
+        warning.align(lv.ALIGN.TOP_MID, 0, 20)
+        return warning
+
     def toggle_details(self):
         if self.details_sw.has_state(lv.STATE.CHECKED):
             self.page2.remove_flag(lv.obj.FLAG.HIDDEN)
@@ -275,8 +290,9 @@ class TransactionScreen(Prompt):
             addr.add_style(self.style, 0)
         addr.align_to(obj, lv.ALIGN.OUT_BOTTOM_MID, 0, 10)
         obj = addr
-        if "warning" in out:
-            text = "WARNING! %s" % out["warning"]
+        warning_text = "\n".join(out.get("warnings", []))
+        if warning_text:
+            text = "WARNING! %s" % warning_text
             warning = add_label(text, scr=self.page)
             warning.add_style(self.style_warning, 0)
             warning.align_to(obj, lv.ALIGN.OUT_BOTTOM_MID, 0, 10)
