@@ -1,4 +1,7 @@
-"""Diagnostico: o JavaCard do Specter (applet MemoryCard) por NFC, no WS1850S.
+"""Diagnostico: o JavaCard do Specter (applet MemoryCard) por NFC.
+
+Serve aos dois leitores: o WS1850S (RFID Unit 2, I2C) e, se ele nao responder,
+o RC522 (MFRC522, SPI). So o primeiro foi medido na placa.
 
     mpremote cp ports/esp32p4/test_nfc_javacard.py :/test_nfc_javacard.py
     mpremote exec "import test_nfc_javacard; test_nfc_javacard.run()"
@@ -41,6 +44,7 @@ import os
 import time
 
 import nfc
+import nfc_mfrc522
 import nfc_ws1850s
 import secp256k1
 from ucryptolib import aes
@@ -77,32 +81,43 @@ class Timeout(nfc.NFCError):
     """O prazo acabou sem nenhum quadro do cartao"""
 
 
-class DiagReader(nfc_ws1850s.WS1850S):
+def _diag_reader(driver):
     """O driver do firmware com prazo ajustavel por troca.
 
     O driver espera 25 ms, pelo timer do chip. Aqui o prazo e do relogio do P4;
     o timer do chip e ignorado e ainda por cima esticado, para o caso de o
     WS1850S, ao contrario do MFRC522, parar de receber quando ele dispara.
+
+    Uma classe por driver, feita aqui, em vez de um mixin: o super() do
+    MicroPython nao segue a ordem de resolucao entre classes irmas.
     """
 
-    deadline_ms = _SELECT_TIMEOUT_MS
+    class Reader(driver):
+        deadline_ms = _SELECT_TIMEOUT_MS
 
-    def init(self):
-        was_ready = self.ready
-        super().init()
-        if not was_ready:
-            # Timer do chip no mais longo que ele tem (prescaler 0xFFF, 604 us
-            # por tick, ~40 s), para ele nunca disparar antes do nosso prazo.
-            for reg, value in ((0x2A, 0x8F), (0x2B, 0xFF), (0x2C, 0xFF), (0x2D, 0xFF)):
-                self._write(reg, value)
+        def init(self):
+            was_ready = self.ready
+            driver.init(self)
+            if not was_ready:
+                # Timer do chip no mais longo que ele tem (prescaler 0xFFF,
+                # 604 us por tick, ~40 s), para ele nunca disparar antes do
+                # nosso prazo.
+                for reg, value in ((0x2A, 0x8F), (0x2B, 0xFF), (0x2C, 0xFF), (0x2D, 0xFF)):
+                    self._write(reg, value)
 
-    def _wait_irq(self, mask, timeout_ms):
-        start = time.ticks_ms()
-        while True:
-            if self._byte(0x04) & mask:  # ComIrqReg
-                return
-            if time.ticks_diff(time.ticks_ms(), start) > self.deadline_ms:
-                raise Timeout("No answer from card")
+        def _wait_irq(self, mask, timeout_ms):
+            start = time.ticks_ms()
+            while True:
+                if self._byte(0x04) & mask:  # ComIrqReg
+                    return
+                if time.ticks_diff(time.ticks_ms(), start) > self.deadline_ms:
+                    raise Timeout("No answer from card")
+
+    return Reader
+
+
+DiagReader = _diag_reader(nfc_ws1850s.WS1850S)  # RFID Unit 2, por I2C
+DiagReaderSPI = _diag_reader(nfc_mfrc522.MFRC522)  # RC522, por SPI
 
 
 # ---------------------------------------------------------------- ISO-DEP ----
@@ -441,15 +456,22 @@ class Channel:
 
 
 def _open_reader(boost):
-    if not nfc_ws1850s.is_present():
-        print("BUS:     nothing answers at 0x%02x on GPIO7 (SDA) / GPIO8 (SCL)"
+    if nfc_ws1850s.is_present():
+        print("BUS:     WS1850S at 0x%02x on I2C" % nfc_ws1850s.WS1850S_ADDR)
+        link = nfc.NFC(DiagReader())
+    elif nfc_mfrc522.is_present():
+        print("BUS:     RC522 on SPI")
+        link = nfc.NFC(DiagReaderSPI())
+    else:
+        print("BUS:     nothing answers at 0x%02x on GPIO7 (SDA) / GPIO8 (SCL),"
               % nfc_ws1850s.WS1850S_ADDR)
+        print("         and no RC522 on SPI (see test_nfc_rc522.py)")
         return None
-    link = nfc.NFC(DiagReader())
     try:
         link.init()
     except nfc.NFCError as error:
-        print("READER:  not a WS1850S, or it does not reset: %s" % error)
+        print("READER:  it does not behave like a reader, or does not reset: %s"
+              % error)
         return None
     reader = link.reader
     if boost:
