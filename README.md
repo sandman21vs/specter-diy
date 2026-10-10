@@ -29,6 +29,7 @@ Every item below was tested on the board.
 | Battery level | working, three states |
 | Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
 | Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | working, **experimental** |
+| Key backup on NFC cards, with an [RFID-RC522 module](#rfid-rc522-spi) | written and tested against a simulated reader, **not yet tried on the board** |
 | Smartcard keystore over NFC, with the [same reader](#smartcard-over-nfc-experimental) | working, **experimental**, position sensitive |
 | Hardware random number generator | working |
 | ESP32-C6 radio | held in reset (airgapped by design) |
@@ -167,7 +168,15 @@ With an **[M5Stack RFID Unit 2](https://shop.m5stack.com/products/rfid-unit-2-ws
 (WS1850S) plugged in, Specter can save the recovery phrase to an NFC card,
 encrypted with a password, and load it back.
 
+The common **RFID-RC522** module (NXP MFRC522) is supported as a second reader,
+on SPI. Specter finds out by itself which of the two is plugged in: it asks for
+the RFID Unit 2 on I2C first and, when nothing answers there, for the RC522 on
+SPI. Cards are the same for both: one written with either reader loads on the
+other.
+
 ### Wiring
+
+#### RFID Unit 2 (I2C)
 
 The reader goes on the board's I2C bus, next to the touch controller. It has a
 Grove cable with four wires:
@@ -186,6 +195,52 @@ above that.
 The reader answers at I2C address `0x28`, which collides with nothing on the
 board.
 
+#### RFID-RC522 (SPI)
+
+> **Not yet tried on the board.** The driver passes its tests against a
+> simulated MFRC522, and the GPIO numbers come from Waveshare's pinout table.
+> Run the diagnostic below before trusting it.
+
+The module goes on the 40-pin header, by loose wires or through the
+[TapHad](https://github.com/sandman21vs/TapHad) adapter board, which is passive: each
+module pin goes straight to a header pin.
+
+| RC522 pin | Board | Header pin (Raspberry Pi numbering) |
+|---|---|---|
+| SCK | **GPIO31** | 23 |
+| MOSI | **GPIO29** | 19 |
+| MISO | **GPIO30** | 21 |
+| SDA / SS (chip select) | **GPIO50** | 33 |
+| RST | **GPIO28** | 15 |
+| IRQ | GPIO49, not used | 31 |
+| 3.3V | **3V3**, not 5 V | 1 |
+| GND | GND | 6, 14, 30 |
+
+Mind the pin numbers. The table uses the Raspberry Pi numbering of the header.
+Waveshare numbers the same header with the two rows swapped (their pin 1 is
+5 V), and that is the numbering used in the
+[smartcard hat rework](#the-hat-needs-a-small-rework) above. When in doubt, go
+by the GPIO name.
+
+The module is a 3.3 V part and has no level shifting: never feed it 5 V. The
+IRQ pin may stay unconnected, the reader is polled.
+
+If the reader is not found, copy
+[`ports/esp32p4/test_nfc_rc522.py`](./ports/esp32p4/test_nfc_rc522.py) to the
+board and run it from the [serial console](#serial-console-optional):
+
+```bash
+mpremote cp ports/esp32p4/test_nfc_rc522.py :/test_nfc_rc522.py
+```
+
+```bash
+mpremote exec "import test_nfc_rc522; test_nfc_rc522.run()"
+```
+
+It says which step fails: the SPI bus, the reset line, the chip version, the
+antenna drivers or the card. Clones of the MFRC522 report other version
+numbers and are accepted.
+
 ### Turn it on
 
 NFC is **off** after flashing. To turn it on:
@@ -196,7 +251,8 @@ NFC is **off** after flashing. To turn it on:
    blank. The test only reads; it never writes to the card.
 3. Tap **Enable NFC**.
 
-If the test says no reader was found, check the four wires.
+If the test says no reader was found, check the wires. The test names the
+reader it found, so it also tells which of the two it is talking to.
 
 With NFC enabled and the reader plugged in, two entries appear:
 
@@ -400,7 +456,8 @@ Design notes, pin maps and every problem found along the way are in
   pipeline, QR decoder and the web flasher
 - [odudex/Kern](https://github.com/odudex/Kern) (NFC branch) and
   [selfcustody/krux](https://github.com/selfcustody/krux): the NFC card format,
-  the WS1850S driver and the KEF encryption format, translated to MicroPython
+  the WS1850S driver (which the RC522 one builds on) and the KEF encryption
+  format, translated to MicroPython
 - [diybitcoinhardware/f469-disco](https://github.com/diybitcoinhardware/f469-disco):
   LVGL, `embit` and the other shared libraries
 
