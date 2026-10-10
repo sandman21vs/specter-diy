@@ -86,6 +86,9 @@ _TIMER_LONG = ((_REG_T_MODE, 0x8F), (_REG_T_PRESCALER, 0xFF),
 _MAX_TIMEOUT_MS = 5100
 # Folga sobre o prazo pedido: o leitor e consultado por I2C, nao por interrupcao.
 _TIMEOUT_MARGIN_MS = 20
+# Consultas por milissegundo de prazo pedido, para o teto de consultas. Uma
+# leitura de registrador por I2C a 400 kHz nao passa nem perto disso.
+_POLLS_PER_MS = 20
 
 
 class _BoardBus:
@@ -122,7 +125,13 @@ def is_present(addr=WS1850S_ADDR):
 
 
 class WS1850S(Reader):
-    """Leitor compativel com MFRC522 em I2C"""
+    """Leitor compativel com MFRC522 em I2C.
+
+    O que e do barramento fica em _raw, _read e _attach; o resto e logica de
+    registradores, e nfc_mfrc522.py a herda trocando so esses tres.
+    """
+
+    _POLLS_PER_MS = _POLLS_PER_MS
 
     def __init__(self, i2c=None, addr=WS1850S_ADDR):
         self.i2c = i2c
@@ -168,18 +177,12 @@ class WS1850S(Reader):
 
     # ---------- Ciclo de vida ----------
 
-    def init(self):
-        """Sobe o leitor com o campo desligado. Idempotente."""
-        if self.ready:
-            return
-        if self.i2c is None:
-            try:
-                self.i2c = _BoardBus()
-            except ImportError:
-                raise NFCNotFound("No I2C bus")
+    def _probe(self):
+        """NFCNotFound se nao ha um leitor respondendo.
 
-        # VersionReg nao serve aqui, entao escreve dois padroes num registrador
-        # inofensivo e le de volta. Sem modulo a transferencia falha.
+        VersionReg nao serve aqui, entao escreve dois padroes num registrador
+        inofensivo e le de volta. Sem modulo a transferencia falha.
+        """
         for pattern in (0x55, 0xAA):
             try:
                 self._write(_REG_T_RELOAD_L, pattern)
@@ -187,6 +190,21 @@ class WS1850S(Reader):
                     raise NFCError("No echo")
             except NFCError:
                 raise NFCNotFound("No NFC reader")
+
+    def _attach(self):
+        """Abre o barramento e confere que o leitor esta nele"""
+        if self.i2c is None:
+            try:
+                self.i2c = _BoardBus()
+            except ImportError:
+                raise NFCNotFound("No I2C bus")
+        self._probe()
+
+    def init(self):
+        """Sobe o leitor com o campo desligado. Idempotente."""
+        if self.ready:
+            return
+        self._attach()
 
         self._write(_REG_COMMAND, _PCD_RESET)
         for _ in range(10):
@@ -263,7 +281,7 @@ class WS1850S(Reader):
         if custom:
             timeout_ms = self.timeout_ms + _TIMEOUT_MARGIN_MS
             # o teto de consultas acompanha o prazo, mas continua existindo
-            polls += timeout_ms * 20
+            polls += timeout_ms * self._POLLS_PER_MS
         start = time.ticks_ms()
         for _ in range(polls):
             irq = self._byte(_REG_COM_IRQ)

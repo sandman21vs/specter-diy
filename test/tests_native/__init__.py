@@ -11,3 +11,4 @@ from .test_nfc import *
 from .test_nfc_seed import *
 from .test_nfc_isodep import *
 from .test_nfc_smartcard import *
+from .test_nfc_mfrc522 import *

@@ -4,6 +4,8 @@ Two models, stacked the way the hardware is:
 
   SimChip   the reader as the driver sees it: an I2C device with the MFRC522
             register set - FIFO, command register, IRQ flags, CRC coprocessor.
+  SimSpiBus the same register set behind the SPI framing of a real MFRC522,
+            with its chip select and its reset pin.
   SimCard   a tag as the reader sees it: ISO14443A frames in, frames out.
             MIFARE Classic 1K or Ultralight/NTAG.
   IsoDepCard  a smartcard: the same selection, then RATS and ISO 14443-4
@@ -381,3 +383,98 @@ class SimChip:
             self.reg[0x06] = 0x10  # BufferOvfl
         self.reg[0x0C] = rx_bits
         self._irq(0x20)
+
+
+class SimPin:
+    """One output pin. Has the shape of machine.Pin in what the driver uses."""
+
+    def __init__(self, level, on_change=None):
+        self.level = level
+        self.on_change = on_change
+
+    def value(self, level=None):
+        if level is None:
+            return self.level
+        level = 1 if level else 0
+        changed, self.level = level != self.level, level
+        if changed and self.on_change:
+            self.on_change(level)
+
+
+class SimSpiBus:
+    """An RC522 module on SPI: a SimChip behind MFRC522 framing.
+
+    Has the shape of the bus the driver opens on the board: spi with
+    write_readinto(), cs and rst. It holds the chip to what the real part
+    does - nothing is heard with the select high or the reset low, the first
+    byte after the select falls is the address, a reset wipes every register
+    and the oscillator takes a while to come back.
+
+    chip.present False is an empty header: MISO floats, and every byte read is
+    `idle`.
+    """
+
+    def __init__(self, chip=None, version=0x92, wake=0, idle=0x00):
+        self.chip = SimChip() if chip is None else chip
+        self.version = version
+        self.wake = wake  # transfers ignored while the oscillator starts
+        self.idle = idle
+        self.spi = self
+        self.cs = SimPin(1, self._select)
+        self.rst = SimPin(0, self._reset)
+        self.asleep = 0
+        self.fresh = False
+        self.resets = 0
+        self.frames = []  # every MOSI frame, as sent
+
+    def _select(self, level):
+        self.fresh = not level
+
+    def _reset(self, level):
+        chip = self.chip
+        if level:
+            self.asleep = self.wake
+            return
+        # NRSTPD low: everything back to the reset state, the antenna with it
+        self.resets += 1
+        chip.reg = {}
+        chip.fifo = bytearray()
+        if chip.card:
+            chip.card.reset()
+
+    def write_readinto(self, tx, rx):
+        chip = self.chip
+        chip.transfers += 1
+        tx = bytes(tx)
+        self.frames.append(tx)
+        if len(rx) != len(tx):
+            raise ValueError("buffers must be the same length")
+        for i in range(len(rx)):
+            rx[i] = self.idle
+        if self.cs.level or not self.fresh:
+            # no select, or a second transfer under the same one: the chip
+            # would take its first byte for data
+            raise AssertionError("SPI transfer outside one chip select")
+        self.fresh = False
+        if not chip.present or not self.rst.level:
+            return
+        if self.asleep:
+            self.asleep -= 1
+            return
+
+        if tx[0] & 0x01:
+            raise AssertionError("address byte with bit 0 set")
+        reg = (tx[0] >> 1) & 0x3F
+        if not tx[0] & 0x80:
+            rx[0] = 0
+            for i, value in enumerate(tx[1:], 1):
+                rx[i] = 0
+                chip._write(reg, value)
+            return
+        # Read: each byte sent addresses the next byte received
+        rx[0] = 0
+        for i in range(1, len(tx)):
+            reg = (tx[i - 1] >> 1) & 0x3F
+            rx[i] = self.version if reg == 0x37 else chip._read(reg)
+        if tx[-1] != 0:
+            raise AssertionError("read not closed with a zero byte")
