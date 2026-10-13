@@ -705,9 +705,11 @@ indutores da antena é um conserto relatado por terceiros, não tentado aqui.
 
 ### O que falta
 
-- PN532: tags MIFARE e NTAG na placa. São os dois pontos do driver que dependem
-  do chip real: a autenticação do Classic pelos registradores do rádio e a
-  resposta de 4 bits na escrita. No simulador passam.
+- PN532: o backup em cartão funcionou na placa pelos menus, testado à mão. Falta
+  rodar ali o `test_nfc.py`, que diz em que etapa a conversa para, nas duas
+  famílias: a autenticação do Classic vai pelos registradores do rádio e a
+  escrita espera uma resposta de 4 bits, e são os dois pontos do driver que
+  dependem do chip real.
 - PN532: o fluxo do keystore na tela, com PIN, e quanto o cartão pode sair do
   centro.
 - RC522: tudo o que está na tabela "o que só a placa responde"; depois, subir o
