@@ -710,8 +710,8 @@ indutores da antena é um conserto relatado por terceiros, não tentado aqui.
   de 10. Isso cobre os dois pontos do driver que dependiam do chip real, a
   autenticação pelos registradores do rádio e a resposta de 4 bits na escrita.
   A NTAG usa a mesma escrita, sem autenticação, e só passou no simulador.
-- PN532: o fluxo do keystore na tela, com PIN, e quanto o cartão pode sair do
-  centro.
+- PN532: quanto o cartão pode sair do centro. O fluxo do keystore na tela
+  (ligar a opção, PIN, toque) funcionou na placa, testado à mão.
 - RC522: tudo o que está na tabela "o que só a placa responde"; depois, subir o
   clock do SPI e decidir se o ganho de recepção precisa mudar para o JavaCard.
 - Smartcard por NFC: saber se a antena no máximo (`go(boost=True)`) alarga a

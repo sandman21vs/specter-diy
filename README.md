@@ -201,7 +201,9 @@ What was measured on the board, with the same smartcard on each:
 
 - **PN532.** Twenty secure channel openings out of twenty at the first try,
   with no frame lost, and the card computing three times faster than on the
-  RFID Unit 2 - a card that gets more power runs faster. On a MIFARE Classic
+  RFID Unit 2 - a card that gets more power runs faster. Starting the device
+  with the smartcard - the switch, the PIN, the tap - worked on the screen
+  too. On a MIFARE Classic
   card, records from 1 to 300 bytes were written and read back, six out of
   six, and an existing backup was read ten times out of ten. NTAG cards have
   not been tried with it. One module, two cards, one afternoon: it has had
