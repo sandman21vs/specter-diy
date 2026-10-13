@@ -1,7 +1,7 @@
 """Diagnostico: o JavaCard do Specter (applet MemoryCard) por NFC.
 
-Serve aos dois leitores: o WS1850S (RFID Unit 2, I2C) e, se ele nao responder,
-o RC522 (MFRC522, SPI). So o primeiro foi medido na placa.
+Serve aos tres leitores, procurados nesta ordem: o WS1850S (RFID Unit 2, I2C),
+o PN532 (I2C) e o RC522 (MFRC522, SPI).
 
     mpremote cp ports/esp32p4/test_nfc_javacard.py :/test_nfc_javacard.py
     mpremote exec "import test_nfc_javacard; test_nfc_javacard.run()"
@@ -44,8 +44,17 @@ import os
 import time
 
 import nfc
-import nfc_mfrc522
 import nfc_ws1850s
+
+# Os outros dois drivers so existem em firmwares mais novos
+try:
+    import nfc_mfrc522
+except ImportError:
+    nfc_mfrc522 = None
+try:
+    import nfc_pn532
+except ImportError:
+    nfc_pn532 = None
 import secp256k1
 from ucryptolib import aes
 
@@ -117,7 +126,50 @@ def _diag_reader(driver):
 
 
 DiagReader = _diag_reader(nfc_ws1850s.WS1850S)  # RFID Unit 2, por I2C
-DiagReaderSPI = _diag_reader(nfc_mfrc522.MFRC522)  # RC522, por SPI
+DiagReaderSPI = _diag_reader(nfc_mfrc522.MFRC522) if nfc_mfrc522 else None  # RC522
+
+
+def _diag_pn532(driver):
+    """O PN532 com a cara que este script espera de um leitor.
+
+    Ele ja tem prazo por troca; aqui so se traduz deadline_ms para ele, a
+    excecao de prazo para a deste script, e os registradores do MFRC522 para
+    os do radio do PN532, que sao os mesmos em outro endereco.
+    """
+
+    class Reader(driver):
+        _deadline_ms = _SELECT_TIMEOUT_MS
+
+        @property
+        def deadline_ms(self):
+            return self._deadline_ms
+
+        @deadline_ms.setter
+        def deadline_ms(self, value):
+            self._deadline_ms = value
+            if self.ready:
+                self.set_timeout(value)
+
+        def transceive(self, send, tx_last_bits=0, recv_size=0):
+            try:
+                return driver.transceive(self, send, tx_last_bits, recv_size)
+            except nfc.NFCTimeout:
+                raise Timeout("No answer from card")
+
+        @staticmethod
+        def _ciu(reg):
+            return 0x6330 + reg if reg < 0x10 else 0x6300 + reg - 0x10
+
+        def _byte(self, reg):
+            return self._read_reg(self._ciu(reg))
+
+        def _write(self, reg, value):
+            self._write_regs(((self._ciu(reg), value),))
+
+    return Reader
+
+
+DiagReaderPN532 = _diag_pn532(nfc_pn532.PN532) if nfc_pn532 else None  # PN532, I2C
 
 
 # ---------------------------------------------------------------- ISO-DEP ----
@@ -459,13 +511,16 @@ def _open_reader(boost):
     if nfc_ws1850s.is_present():
         print("BUS:     WS1850S at 0x%02x on I2C" % nfc_ws1850s.WS1850S_ADDR)
         link = nfc.NFC(DiagReader())
-    elif nfc_mfrc522.is_present():
+    elif nfc_pn532 and nfc_pn532.is_present():
+        print("BUS:     PN532 at 0x%02x on I2C" % nfc_pn532.PN532_ADDR)
+        link = nfc.NFC(DiagReaderPN532())
+    elif nfc_mfrc522 and nfc_mfrc522.is_present():
         print("BUS:     RC522 on SPI")
         link = nfc.NFC(DiagReaderSPI())
     else:
-        print("BUS:     nothing answers at 0x%02x on GPIO7 (SDA) / GPIO8 (SCL),"
+        print("BUS:     nothing answers on GPIO7 (SDA) / GPIO8 (SCL) at 0x%02x"
               % nfc_ws1850s.WS1850S_ADDR)
-        print("         and no RC522 on SPI (see test_nfc_rc522.py)")
+        print("         (RFID Unit 2) or 0x24 (PN532), and no RC522 on SPI")
         return None
     try:
         link.init()

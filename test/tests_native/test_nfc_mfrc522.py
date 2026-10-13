@@ -34,6 +34,7 @@ if not hasattr(time, "ticks_us"):
 
 import nfc
 import nfc_mfrc522
+import nfc_pn532
 import nfc_ws1850s
 import test_nfc as tags
 import test_nfc_seed as seeds
@@ -328,7 +329,8 @@ class Rc522SelectionTest(unittest.TestCase):
         with mock.patch.object(nfc, "_drivers", None):
             self.assertTrue(nfc.is_supported())
             self.assertEqual(
-                [entry[0] for entry in nfc._load_drivers()], [nfc_ws1850s, nfc_mfrc522]
+                [entry[0] for entry in nfc._load_drivers()],
+                [nfc_ws1850s, nfc_pn532, nfc_mfrc522],
             )
 
     def test_i2c_reader_wins(self):

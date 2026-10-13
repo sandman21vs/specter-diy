@@ -14,7 +14,8 @@ while the card does elliptic curve work.
 
 Those numbers are the card's, taken from its ATS and counted on this side's
 clock, so nothing here is tuned to a reader. What a reader changes is the
-field the card has to live on, and with the RC522 that has not been measured.
+field the card has to live on: on a PN532 the same card did that work three
+times faster, and on an RC522 module it could not finish its first answer.
 """
 import time
 

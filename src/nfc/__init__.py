@@ -235,10 +235,12 @@ def build_header(length, capacity, record_type=RECORD_KEF):
 
 # The reader drivers are board specific and live with the port, so a build for
 # a board without one simply has no NFC. Each entry is (module, class, name),
-# in the order they are looked for: the I2C reader first, because asking it is
-# one ACK, and the SPI one only when that got no answer.
+# in the order they are looked for: the I2C readers first, because asking one
+# is a single ACK, and the SPI one only when neither answered. One reader is
+# plugged in at a time; with more, the first in this list is the one used.
 _DRIVERS = (
     ("nfc_ws1850s", "WS1850S", "RFID Unit 2 (I2C)"),
+    ("nfc_pn532", "PN532", "PN532 (I2C)"),
     ("nfc_mfrc522", "MFRC522", "RC522 (SPI)"),
 )
 # None until the first look, then the (module, class, name) entries that

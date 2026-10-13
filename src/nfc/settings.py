@@ -19,7 +19,7 @@ from . import (
 from .seed import wait_for_card
 
 WIRING = (
-    "RFID Unit 2 (I2C): SDA to GPIO7,\nSCL to GPIO8.\n\n"
+    "RFID Unit 2 or PN532 (I2C): SDA to\nGPIO7, SCL to GPIO8.\n\n"
     "RC522 (SPI): SCK to GPIO31, MOSI to\nGPIO29, MISO to GPIO30, SDA to GPIO50,\n"
     "RST to GPIO28.\n\n"
     "Both: VCC to 3V3 (not 5 V), GND to GND."
@@ -111,7 +111,7 @@ async def settings_menu(gui, enabled, save, smartcard=None):
         item = await gui.menu(
             buttons,
             title="NFC card reader",
-            note="RFID Unit 2 on I2C (GPIO7, GPIO8) or RC522 on SPI",
+            note="RFID Unit 2 or PN532 on I2C (GPIO7, GPIO8), or RC522 on SPI",
             last=(255, None),
         )
         if item == 255:
