@@ -226,7 +226,30 @@ In this mode device can only operate when the smartcard is inserted!"""
 
     async def save_mnemonic(self):
         await self.check_card(check_pin=True)
-        data_saved, encrypted, decryptable, same_mnemonic = self.get_secret_info()
+        encrypt = await self.ask_how_to_save(self.get_secret_info())
+        if encrypt is None:
+            return
+        self.show_loader("Saving secret to the card...")
+        d = self.serialize_data(
+            {"entropy": bip39.mnemonic_to_bytes(self.mnemonic)},
+            encrypt=encrypt,
+        )
+        self.applet.save_secret(d)
+        self._is_key_saved = True
+        # check it's ok
+        await self.load_mnemonic()
+        await self.show(
+            Alert(
+                "Success!",
+                "Your key is stored on the smartcard now.",
+                button_text="OK",
+            )
+        )
+
+    async def ask_how_to_save(self, info):
+        """Confirms overwriting what the card holds and asks whether to
+        encrypt. Returns the encrypt flag, or None if the user backs out."""
+        data_saved, encrypted, decryptable, same_mnemonic = info
         if data_saved:
             if not decryptable:
                 msg = ("There is data on the card, but its nature is unknown since we are unable to decrypt it.\n\n"
@@ -244,7 +267,7 @@ In this mode device can only operate when the smartcard is inserted!"""
                     "\n%s" % msg + "\n\nDo you want to continue?", 'Continue', warning="Irreversibly overwrite the data on the card"
                 ))
             if not confirm:
-                return
+                return None
         keep_as_plain_text = await self.show(Prompt("Encrypt the secret?",
                     "\nIf you encrypt the secret on the card "
                     "it will only work with the device you are currently using.\n\n"
@@ -254,23 +277,7 @@ In this mode device can only operate when the smartcard is inserted!"""
                     confirm_text="Keep as plain text",
                     cancel_text="Encrypt",
                 ))
-        encrypt = not keep_as_plain_text
-        self.show_loader("Saving secret to the card...")
-        d = self.serialize_data(
-            {"entropy": bip39.mnemonic_to_bytes(self.mnemonic)},
-            encrypt=encrypt,
-        )
-        self.applet.save_secret(d)
-        self._is_key_saved = True
-        # check it's ok
-        await self.load_mnemonic()
-        await self.show(
-            Alert(
-                "Success!",
-                "Your key is stored on the smartcard now.",
-                button_text="OK",
-            )
-        )
+        return not keep_as_plain_text
 
     @property
     def is_key_saved(self):
@@ -334,7 +341,6 @@ In this mode device can only operate when the smartcard is inserted!"""
     async def wait_for_card(self, scr):
         while not self.connection.isCardInserted():
             await asyncio.sleep_ms(30)
-            scr.tick(5)
         if scr.waiting:
             scr.waiting = False
 
@@ -358,13 +364,13 @@ In this mode device can only operate when the smartcard is inserted!"""
 
     async def storage_menu(self):
         """Manage storage, return True if new key was loaded"""
-        enabled = self.connection.isCardInserted()
+        enabled = self.card_usable()
         buttons = [
             # id, text, enabled, color
             (None, "Smartcard storage"),
             (0, "Save key to the card", enabled),
             (1, "Load key from the card", enabled and self.is_key_saved),
-            (2, "Delete key from the card", enabled and self.is_key_saved),
+            (2, "Delete key from the card", enabled and self.card_has_data()),
             (3, "Use a different card", enabled),
             (4, lv.SYMBOL.SETTINGS + " Get card info", enabled),
             # (5, lv.SYMBOL.TRASH + " Wipe the card", enabled, 0x951E2D),
@@ -374,7 +380,7 @@ In this mode device can only operate when the smartcard is inserted!"""
         while True:
             # check updated status
             buttons[2] = (1, "Load key from the card", enabled and self.is_key_saved)
-            buttons[3] = (2, "Delete key from the card", enabled and self.is_key_saved)
+            buttons[3] = (2, "Delete key from the card", enabled and self.card_has_data())
             note = "Card fingerprint: %s" % self.hexid
             # wait for menu selection
             menuitem = await self.show(Menu(buttons, note=note, last=(255, None)))
@@ -412,18 +418,29 @@ In this mode device can only operate when the smartcard is inserted!"""
                         "Continue?"
                     )
                 ):
-                    self.lock()
-                    await self.unlock()
-                    self.lock()
-                    self.applet.close_secure_channel()
-                    self._userkey = None
-                    await self.show(Alert("Please swap the card", "Now you can insert another card and set it up.", button_text="Continue"))
-                    await self.check_card(check_pin=True)
-                    await self.unlock()
+                    await self.switch_card()
             elif menuitem == 4:
                 await self.show_card_info()
             else:
                 raise KeyStoreError("Invalid menu")
+
+    def card_usable(self):
+        """True when the storage menu has a card to work with"""
+        return self.connection.isCardInserted()
+
+    def card_has_data(self):
+        """True when there is something on the card to delete"""
+        return self.is_key_saved
+
+    async def switch_card(self):
+        self.lock()
+        await self.unlock()
+        self.lock()
+        self.applet.close_secure_channel()
+        self._userkey = None
+        await self.show(Alert("Please swap the card", "Now you can insert another card and set it up.", button_text="Continue"))
+        await self.check_card(check_pin=True)
+        await self.unlock()
 
     def get_secret_info(self):
         data = self.applet.get_secret()
@@ -442,10 +459,13 @@ In this mode device can only operate when the smartcard is inserted!"""
         return data_saved, encrypted, decryptable, same_mnemonic
 
     async def show_card_info(self):
+        await self.show_info(self.get_secret_info())
+
+    async def show_info(self, info):
         note = "Card fingerprint: %s" % self.hexid
         version = "%s v%s" % (self.applet.NAME, self.applet.version)
         platform = self.applet.platform
-        data_saved, encrypted, decryptable, same_mnemonic = self.get_secret_info()
+        data_saved, encrypted, decryptable, same_mnemonic = info
         # yes = lv.SYMBOL.OK+" Yes"
         # no = lv.SYMBOL.CLOSE+" No"
         yes = "Yes"

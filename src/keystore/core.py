@@ -10,6 +10,11 @@ class PinError(KeyStoreError):
     NAME = "PIN error"
 
 
+class KeyStoreUnavailable(KeyStoreError):
+    """Raised from init() when this keystore can not be used after all, so
+    the next one in line gets its turn"""
+
+
 class KeyStore:
     NAME = "Generic Keystore"
     NOTE = "Base class"

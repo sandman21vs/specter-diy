@@ -25,6 +25,39 @@ class SecureChannelError(Exception):
     """
     pass
 
+def parse_card_signature(raw):
+    """Parses the DER signature the card sends when opening the channel.
+
+    The card encodes r and s on at least 32 bytes each. When the top byte of
+    one of them happens to be zero (about 1 handshake in 128) it stays there as
+    padding, which strict DER forbids, and libsecp256k1 refuses the signature.
+    The channel then failed to open and the card looked absent.
+
+    Accept that padding. The signature is still verified against the card's
+    public key by the caller, so this does not weaken the handshake.
+    """
+    try:
+        return secp256k1.ecdsa_signature_parse_der(raw)
+    except ValueError:
+        pass
+    # SEQUENCE { INTEGER r, INTEGER s }, short-form lengths only.
+    if len(raw) < 8 or raw[0] != 0x30 or raw[1] != len(raw) - 2 or raw[2] != 0x02:
+        raise SecureChannelError("Invalid signature encoding.")
+    r_len = raw[3]
+    s_tag = 4 + r_len
+    if len(raw) < s_tag + 2 or raw[s_tag] != 0x02:
+        raise SecureChannelError("Invalid signature encoding.")
+    s_len = raw[s_tag + 1]
+    if s_tag + 2 + s_len != len(raw):
+        raise SecureChannelError("Invalid signature encoding.")
+    r = bytes(raw[4:s_tag]).lstrip(b"\x00")
+    sig_s = bytes(raw[s_tag + 2:]).lstrip(b"\x00")
+    if len(r) > 32 or len(sig_s) > 32:
+        raise SecureChannelError("Invalid signature encoding.")
+    compact = b"\x00" * (32 - len(r)) + r + b"\x00" * (32 - len(sig_s)) + sig_s
+    return secp256k1.ecdsa_signature_parse_compact(compact)
+
+
 class SecureChannel:
     """
     Class that implements secure communication with the card.
@@ -103,7 +136,7 @@ class SecureChannel:
                 raise SecureChannelError("Wrong HMAC.")
             data += recv_hmac
             raw_sig = s.read()
-            sig = secp256k1.ecdsa_signature_parse_der(raw_sig)
+            sig = parse_card_signature(raw_sig)
             # in case card doesn't follow low s rule (but it should)
             sig = secp256k1.ecdsa_signature_normalize(sig)
             if not secp256k1.ecdsa_verify(
@@ -132,7 +165,7 @@ class SecureChannel:
             if expected_hmac != recv_hmac:
                 raise SecureChannelError("Wrong HMAC.")
             data += recv_hmac
-            sig = secp256k1.ecdsa_signature_parse_der(s.read())
+            sig = parse_card_signature(s.read())
             # in case card doesn't follow low s rule (but it should)
             sig = secp256k1.ecdsa_signature_normalize(sig)
             if not secp256k1.ecdsa_verify(
