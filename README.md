@@ -29,8 +29,11 @@ Every item below was tested on the board.
 | Battery level | working, three states |
 | Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
 | Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | working, **experimental** |
-| Key backup on NFC cards, with an [RFID-RC522 module](#rfid-rc522-spi) | written and tested against a simulated reader, **not yet tried on the board** |
-| Smartcard keystore over NFC, with the [same reader](#smartcard-over-nfc-experimental) | working, **experimental**, position sensitive |
+| Key backup on NFC cards, with a [PN532 module](#pn532-i2c) | tested against a simulated reader, **not yet tried on the board** |
+| Key backup on NFC cards, with an [RFID-RC522 module](#rfid-rc522-spi) | cards are read on the board; writing **not yet tried on the board** |
+| Smartcard keystore over NFC, with a [PN532 module](#which-reader-to-get) | working on the board, **experimental** |
+| Smartcard keystore over NFC, with the [M5Stack RFID Unit 2](#which-reader-to-get) | working, **experimental**, position sensitive |
+| Smartcard keystore over NFC, with an [RFID-RC522 module](#which-reader-to-get) | **does not work**: the module can not power the card |
 | Hardware random number generator | working |
 | ESP32-C6 radio | held in reset (airgapped by design) |
 | Secure boot / flash encryption / secure wipe | **not implemented** |
@@ -106,8 +109,11 @@ wires are most likely swapped.
 ## Smartcard over NFC (experimental)
 
 > **Proof of concept.** It worked on the board in the first trials and has had
-> very little use. The reader's antenna is small: the card has to rest on the
-> right spot and stay still, and finding that spot takes some trying.
+> very little use. How well it works depends on the reader: see
+> [which reader to get](#which-reader-to-get). With the RFID Unit 2 the card
+> has to rest on the right spot and stay still, and finding that spot takes
+> some trying. With a PN532 it was found at once. An RC522 can not power the
+> card at all.
 
 The Specter smartcard (a JavaCard with the MemoryCard applet) can be read by
 the [NFC reader](#nfc-card-reader-optional-experimental) instead of the
@@ -168,11 +174,52 @@ With an **[M5Stack RFID Unit 2](https://shop.m5stack.com/products/rfid-unit-2-ws
 (WS1850S) plugged in, Specter can save the recovery phrase to an NFC card,
 encrypted with a password, and load it back.
 
-The common **RFID-RC522** module (NXP MFRC522) is supported as a second reader,
-on SPI. Specter finds out by itself which of the two is plugged in: it asks for
-the RFID Unit 2 on I2C first and, when nothing answers there, for the RC522 on
-SPI. Cards are the same for both: one written with either reader loads on the
-other.
+Two cheaper modules are supported as well: the **PN532** (the red "NFC RFID
+module V3"), on the same two I2C wires, and the common **RFID-RC522** (NXP
+MFRC522), on SPI. One reader is plugged in at a time, and Specter finds out by
+itself which: it asks for the RFID Unit 2, then for the PN532, and only when
+neither answers for the RC522. Cards are the same for all three: one written
+with any reader loads on the others.
+
+### Which reader to get
+
+All three read the backup cards. They differ in what else they can do, in how
+they are wired, and in how much of this has been tried on the board.
+
+| | [M5Stack RFID Unit 2](https://docs.m5stack.com/en/unit/rfid2) | PN532 module V3 | RFID-RC522 module |
+|---|---|---|---|
+| Chip | WS1850S | [NXP PN532](https://www.nxp.com/products/rfid-nfc/nfc-hf/nfc-readers/nfc-integrated-solution:PN5321A3HN) | [NXP MFRC522](https://www.nxp.com/products/rfid-nfc/nfc-hf/nfc-readers/standard-performance-mifare-and-ntag-frontend:MFRC52202HN1) |
+| Where to look | [M5Stack shop](https://shop.m5stack.com/products/rfid-unit-2-ws1850s) | [Elechouse manual](https://www.elechouse.com/elechouse/images/product/PN532_module_V3/PN532_%20Manual_V3.pdf); sold by many shops as "PN532 NFC RFID module V3" | sold by many shops as "RFID-RC522" |
+| Price | the most expensive of the three | a few dollars | the cheapest |
+| Wires | 4 (I2C, Grove cable) | 4 (I2C) | 7 (SPI) |
+| Key backup on MIFARE / NTAG cards | **works** on the board | simulated only so far | cards are read on the board |
+| Specter smartcard (JavaCard) | **works**, but the card has to sit on one exact spot | **works**, found at once | **does not work** |
+| Time for the card to open its secure channel | about 1.0 s | about 0.3 s | - |
+| Made by | one maker, one design | clones of one design; quality varies | clones; quality varies |
+
+What was measured on the board, with the same smartcard on each:
+
+- **PN532.** Twenty secure channel openings out of twenty at the first try,
+  with no frame lost, and the card computing three times faster than on the
+  RFID Unit 2 - a card that gets more power runs faster. One module, one card,
+  one afternoon: it has had even less use than the rest.
+- **RFID Unit 2.** Twenty out of twenty once the card is on the right spot. A
+  little off, the card is found and then drops out in the middle of a command.
+- **RC522.** The card wakes up and loses power as soon as it starts to answer:
+  not one complete answer in over nine hundred tries, at any position and with
+  the antenna drive at its maximum. A MIFARE card on the same module, in the
+  same place, is read every time. A smartcard has a processor to feed, and
+  this module's field is enough only for memory cards. Replacing the two
+  antenna inductors is a known fix for these boards, reported by others and
+  not tried here.
+
+So: for the **smartcard**, a PN532. For the **key backup only**, any of the
+three; the RC522 is the cheapest and the RFID Unit 2 the one most used here.
+
+Both NXP chips are old parts that NXP no longer recommends for new designs,
+and nearly every PN532 and RC522 module on sale is a clone. They are listed
+here because they are cheap and easy to find, which suits a device meant to be
+built at home.
 
 ### Wiring
 
@@ -195,11 +242,39 @@ above that.
 The reader answers at I2C address `0x28`, which collides with nothing on the
 board.
 
+#### PN532 (I2C)
+
+The module goes on the same two wires as the RFID Unit 2:
+
+| PN532 module | Board |
+|---|---|
+| SDA | **GPIO7** |
+| SCL | **GPIO8** |
+| VCC | **3V3**, not 5 V |
+| GND | GND |
+
+Three things to get right:
+
+- **Set the module's switch to I2C.** It usually ships set to serial, and then
+  it does not answer at all. The positions are printed on the board and listed
+  in the [manual](https://www.elechouse.com/elechouse/images/product/PN532_module_V3/PN532_%20Manual_V3.pdf).
+  The module reads the switch when it powers up, so cut its power after
+  changing it.
+- **Power it from 3.3 V.** The module pulls SDA and SCL up to its own supply,
+  and this bus is the one the touch controller and the camera are on.
+- **Use the four pins on the side of the module,** marked GND, VCC, SDA and
+  SCL. The longer row is for SPI, which this driver does not use.
+
+The reader answers at I2C address `0x24`. If it is not found, **Test the
+reader** in the NFC settings says so; with a multimeter, SDA and SCL should
+both rest near 3.3 V.
+
 #### RFID-RC522 (SPI)
 
-> **Not yet tried on the board.** The driver passes its tests against a
-> simulated MFRC522, and the GPIO numbers come from Waveshare's pinout table.
-> Run the diagnostic below before trusting it.
+> **Partly tried on the board.** The module is found and cards are read.
+> Writing a card has only run against a simulated MFRC522. The Specter
+> smartcard does not work with this module: see
+> [which reader to get](#which-reader-to-get).
 
 The module goes on the 40-pin header, by loose wires or through the
 [TapHad](https://github.com/sandman21vs/TapHad) adapter board, which is passive: each

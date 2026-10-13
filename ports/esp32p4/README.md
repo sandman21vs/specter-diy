@@ -613,13 +613,10 @@ mpremote exec "import test_nfc_rc522; test_nfc_rc522.run()"        # só lê
 mpremote exec "import test_nfc_rc522; test_nfc_rc522.roundtrip()"  # ESCREVE um registro de teste
 ```
 
-**Smartcard por NFC no RC522: não medido.** O caminho é o mesmo (`isodep.py`
-fala com `nfc.Reader`), e os testes do keystore passam sobre o SPI simulado. Os
-prazos de ISO-DEP vêm do ATS do cartão e são contados pelo relógio do P4, com o
-timer do chip no máximo, então não dependem do leitor. O que depende é o campo:
-potência da antena do módulo para um JavaCard fazendo curva elíptica, e o ganho
-de recepção. `test_nfc_javacard.py` agora cai no RC522 quando o WS1850S não
-responde; rode `go()` e, se o cartão cair no meio, `go(boost=True)`.
+**Smartcard por NFC no RC522: medido, não funciona.** O caminho de software é
+o mesmo (`isodep.py` fala com `nfc.Reader`), e os testes do keystore passam
+sobre o SPI simulado; o que falta é campo. As medições estão em
+[PN532 por I2C](#pn532-por-i2c), junto com as dos outros dois leitores.
 
 ### Smartcard por NFC
 
@@ -667,8 +664,52 @@ mpremote cp ports/esp32p4/test_nfc_javacard.py :/test_nfc_javacard.py
 mpremote exec "import test_nfc_javacard; test_nfc_javacard.go()"   # so le
 ```
 
+### PN532 por I2C
+
+Terceiro leitor: o módulo vermelho **PN532 NFC RFID V3**, nos mesmos GPIO7/8 do
+RFID Unit 2, no endereço `0x24`. A chave do módulo vai em I2C e a alimentação
+em 3,3 V, porque os pull-ups dele puxam SDA e SCL para o próprio VCC.
+
+O PN532 não é um MFRC522 com outro barramento: entre o host e o rádio há um
+firmware, que se comanda por quadros e que sabe selecionar cartões e falar
+ISO-DEP sozinho. Aqui ele **não** é usado para isso. O driver
+(`lib/nfc_pn532.py`) entrega quadros crus, como os outros dois, por
+`InCommunicateThru`, e mexe direto nos registradores do rádio (o CIU, um PN512,
+com o mapa do MFRC522 em `0x63xx`) para bits finais, CRC e crypto1. Assim a
+seleção, o MIFARE, o `isodep.py` e o keystore são os mesmos, com os limites que
+já estavam testados, e o firmware do chip não toma decisão nenhuma sobre o
+cartão. É a sequência que a libnfc usa para quadros crus.
+
+Medido na placa, com um JavaCard (NXP JCOP, ATS `0578777102`):
+
+| | PN532 | RFID Unit 2 | RC522 |
+|---|---|---|---|
+| Canal seguro `es`, 10 aberturas | 10/10, 324 ms | 10/10 no ponto certo, 1007 ms | não seleciona |
+| Canal seguro `ee`, 10 aberturas | 10/10, 603 ms | 10/10 no ponto certo, 1886 ms | - |
+| Quadros perdidos | 0 em 337 WTX | 0 no ponto certo | - |
+| Posição | achado de primeira | um ponto exato | nenhuma |
+
+O cartão calcula três vezes mais rápido no PN532, e nos testes anteriores ele
+ficava mais lento justamente onde recebia menos energia: a leitura é que o
+PN532 entrega mais campo. Também passaram na placa a conexão do firmware
+(`smartcard.CardConnection`, 10 toques seguidos) e o applet com o canal seguro
+reais do keystore, sem enviar PIN.
+
+**RC522 com o JavaCard: não funciona, e não é software.** O cartão acorda, segue
+a máquina de estados da ISO 14443-3 e perde a alimentação ao modular a resposta:
+o leitor recebe 1 bit do ATQA, em qualquer ganho de recepção e limiar, com a
+antena do padrão ao máximo, e o cartão volta ao estado inicial depois de cada
+tentativa. Em 904 tentativas com o cartão em movimento, nenhuma resposta
+completa; uma tag MIFARE no mesmo lugar é selecionada sempre. Trocar os dois
+indutores da antena é um conserto relatado por terceiros, não tentado aqui.
+
 ### O que falta
 
+- PN532: tags MIFARE e NTAG na placa. São os dois pontos do driver que dependem
+  do chip real: a autenticação do Classic pelos registradores do rádio e a
+  resposta de 4 bits na escrita. No simulador passam.
+- PN532: o fluxo do keystore na tela, com PIN, e quanto o cartão pode sair do
+  centro.
 - RC522: tudo o que está na tabela "o que só a placa responde"; depois, subir o
   clock do SPI e decidir se o ganho de recepção precisa mudar para o JavaCard.
 - Smartcard por NFC: saber se a antena no máximo (`go(boost=True)`) alarga a
