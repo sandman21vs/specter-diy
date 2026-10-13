@@ -29,7 +29,7 @@ Every item below was tested on the board.
 | Battery level | working, three states |
 | Smartcard keystore, with the [SEC1210 hat](#smartcard-hat-optional) | working |
 | Key backup on NFC cards, with the [M5Stack RFID Unit 2](#nfc-card-reader-optional-experimental) | working, **experimental** |
-| Key backup on NFC cards, with a [PN532 module](#pn532-i2c) | working, **experimental** |
+| Key backup on NFC cards, with a [PN532 module](#pn532-i2c) | working on MIFARE Classic, **experimental**; NTAG not yet tried on the board |
 | Key backup on NFC cards, with an [RFID-RC522 module](#rfid-rc522-spi) | cards are read on the board; writing **not yet tried on the board** |
 | Smartcard keystore over NFC, with a [PN532 module](#which-reader-to-get) | working on the board, **experimental** |
 | Smartcard keystore over NFC, with the [M5Stack RFID Unit 2](#which-reader-to-get) | working, **experimental**, position sensitive |
@@ -192,7 +192,7 @@ they are wired, and in how much of this has been tried on the board.
 | Where to look | [M5Stack shop](https://shop.m5stack.com/products/rfid-unit-2-ws1850s) | [Elechouse manual](https://www.elechouse.com/elechouse/images/product/PN532_module_V3/PN532_%20Manual_V3.pdf); sold by many shops as "PN532 NFC RFID module V3" | sold by many shops as "RFID-RC522" |
 | Price | the most expensive of the three | a few dollars | the cheapest |
 | Wires | 4 (I2C, Grove cable) | 4 (I2C) | 7 (SPI) |
-| Key backup on MIFARE / NTAG cards | **works** on the board | **works** on the board | cards are read on the board |
+| Key backup on MIFARE / NTAG cards | **works** on the board | **works** on the board with MIFARE Classic; NTAG simulated only | cards are read on the board |
 | Specter smartcard (JavaCard) | **works**, but the card has to sit on one exact spot | **works**, found at once | **does not work** |
 | Time for the card to open its secure channel | about 1.0 s | about 0.3 s | - |
 | Made by | one maker, one design | clones of one design; quality varies | clones; quality varies |
@@ -201,9 +201,11 @@ What was measured on the board, with the same smartcard on each:
 
 - **PN532.** Twenty secure channel openings out of twenty at the first try,
   with no frame lost, and the card computing three times faster than on the
-  RFID Unit 2 - a card that gets more power runs faster. The key backup on
-  cards worked through the menus too. One module, a few cards, one afternoon:
-  it has had even less use than the rest.
+  RFID Unit 2 - a card that gets more power runs faster. On a MIFARE Classic
+  card, records from 1 to 300 bytes were written and read back, six out of
+  six, and an existing backup was read ten times out of ten. NTAG cards have
+  not been tried with it. One module, two cards, one afternoon: it has had
+  even less use than the rest.
 - **RFID Unit 2.** Twenty out of twenty once the card is on the right spot. A
   little off, the card is found and then drops out in the middle of a command.
 - **RC522.** The card wakes up and loses power as soon as it starts to answer:
