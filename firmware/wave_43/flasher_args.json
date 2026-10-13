@@ -1,0 +1,8 @@
+{
+    "flash_files": {
+        "0x2000": "bootloader.bin",
+        "0x8000": "partition-table.bin",
+        "0x10000": "specter-diy.bin",
+        "0x410000": "storage-reset.bin"
+    }
+}
