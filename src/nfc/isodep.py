@@ -11,6 +11,11 @@ it and how long its answer is. Each of those is bounded here before it is used.
 Checked against a JCOP card running the Specter MemoryCard applet on a
 WS1850S: frame waiting time 39 ms, one S(WTX) every 27 ms and up to 61 of them
 while the card does elliptic curve work.
+
+Those numbers are the card's, taken from its ATS and counted on this side's
+clock, so nothing here is tuned to a reader. What a reader changes is the
+field the card has to live on: on a PN532 the same card did that work three
+times faster, and on an RC522 module it could not finish its first answer.
 """
 import time
 

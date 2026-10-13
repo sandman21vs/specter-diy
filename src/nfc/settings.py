@@ -13,12 +13,17 @@ from . import (
     NFCError,
     NFCNotFound,
     RECORD_KEF,
-    is_available,
     parse_header,
+    reader_name,
 )
 from .seed import wait_for_card
 
-WIRING = "SDA to GPIO7, SCL to GPIO8,\nVCC to 3V3 (not 5 V), GND to GND."
+WIRING = (
+    "RFID Unit 2 or PN532 (I2C): SDA to\nGPIO7, SCL to GPIO8.\n\n"
+    "RC522 (SPI): SCK to GPIO31, MOSI to\nGPIO29, MISO to GPIO30, SDA to GPIO50,\n"
+    "RST to GPIO28.\n\n"
+    "Both: VCC to 3V3 (not 5 V), GND to GND."
+)
 
 
 def _describe_record(nfc):
@@ -42,10 +47,11 @@ def _describe_record(nfc):
 
 async def test_reader(gui):
     """Checks the bus, the reader and, if one is offered, a card"""
-    if not is_available():
+    name = reader_name()
+    if name is None:
         await gui.alert(
             "No NFC reader found",
-            "Nothing answers on the I2C bus.\n\nCheck the four wires:\n" + WIRING,
+            "Nothing answers on I2C or on SPI.\n\nCheck the wires:\n" + WIRING,
         )
         return False
     nfc = NFC()
@@ -55,15 +61,15 @@ async def test_reader(gui):
         except NFCError:
             await gui.alert(
                 "NFC reader error",
-                "Something answers on the bus, but it does not behave "
-                "like an RFID Unit 2 (WS1850S).",
+                "Something answers as an %s, but it does not behave "
+                "like an NFC reader." % name,
             )
             return False
         try:
             tag = await wait_for_card(
                 gui,
                 nfc,
-                "The NFC reader works",
+                "%s works" % name,
                 "Hold a card against it to test reading,\nor cancel to stop here.",
             )
             if tag is None:
@@ -105,7 +111,7 @@ async def settings_menu(gui, enabled, save, smartcard=None):
         item = await gui.menu(
             buttons,
             title="NFC card reader",
-            note="M5Stack RFID Unit 2 on GPIO7 (SDA) and GPIO8 (SCL)",
+            note="RFID Unit 2 or PN532 on I2C (GPIO7, GPIO8), or RC522 on SPI",
             last=(255, None),
         )
         if item == 255:

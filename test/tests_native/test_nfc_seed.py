@@ -331,13 +331,15 @@ class SettingsTest(unittest.TestCase):
     def setUp(self):
         self.chip = SimChip(SimCard())
         self._open_reader = nfc.open_reader
-        self._is_available = nfc_settings.is_available
+        self._reader_name = nfc_settings.reader_name
         nfc.open_reader = lambda: WS1850S(i2c=self.chip)
-        nfc_settings.is_available = lambda: self.chip.present
+        nfc_settings.reader_name = (
+            lambda: "RFID Unit 2 (I2C)" if self.chip.present else None
+        )
 
     def tearDown(self):
         nfc.open_reader = self._open_reader
-        nfc_settings.is_available = self._is_available
+        nfc_settings.reader_name = self._reader_name
 
     def run_test(self, gui):
         return asyncio.run(nfc_settings.test_reader(gui))
@@ -357,6 +359,7 @@ class SettingsTest(unittest.TestCase):
         self.assertFalse(self.run_test(gui))
         self.assertEqual(gui.titles("alert"), ["No NFC reader found"])
         self.assertIn("GPIO7", gui.shown[-1][2])
+        self.assertIn("GPIO31", gui.shown[-1][2])
 
     def test_something_else_on_the_bus(self):
         class Deaf(SimChip):
@@ -371,7 +374,7 @@ class SettingsTest(unittest.TestCase):
     def test_reader_alone(self):
         gui = FakeGUI(cancel_tap=True)
         self.assertTrue(self.run_test(gui))
-        self.assertEqual(gui.titles("screen"), ["The NFC reader works"])
+        self.assertEqual(gui.titles("screen"), ["RFID Unit 2 (I2C) works"])
         self.assertEqual(gui.titles("alert"), [])
         self.assertFalse(self.chip.field_on)
 
@@ -416,7 +419,7 @@ class SettingsTest(unittest.TestCase):
         gui = FakeGUI(cancel_tap=True)
         gui.menus = [2, 255]
         self.assertTrue(asyncio.run(nfc_settings.settings_menu(gui, True, None)))
-        self.assertEqual(gui.titles("screen"), ["The NFC reader works"])
+        self.assertEqual(gui.titles("screen"), ["RFID Unit 2 (I2C) works"])
 
 
 if __name__ == "__main__":

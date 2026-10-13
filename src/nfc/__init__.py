@@ -233,35 +233,62 @@ def build_header(length, capacity, record_type=RECORD_KEF):
     return bytes(header)
 
 
-# The reader driver is board specific and lives with the port, so a build for
-# a board without one simply has no NFC. None until the first look, then the
-# module, or False so a missing driver is not searched for at every menu.
-_driver = None
+# The reader drivers are board specific and live with the port, so a build for
+# a board without one simply has no NFC. Each entry is (module, class, name),
+# in the order they are looked for: the I2C readers first, because asking one
+# is a single ACK, and the SPI one only when neither answered. One reader is
+# plugged in at a time; with more, the first in this list is the one used.
+_DRIVERS = (
+    ("nfc_ws1850s", "WS1850S", "RFID Unit 2 (I2C)"),
+    ("nfc_pn532", "PN532", "PN532 (I2C)"),
+    ("nfc_mfrc522", "MFRC522", "RC522 (SPI)"),
+)
+# None until the first look, then the (module, class, name) entries that
+# imported - empty when there is no driver, so it is not searched for at every
+# menu.
+_drivers = None
 
 
-def _load_driver():
-    global _driver
-    if _driver is None:
+def _load_drivers():
+    global _drivers
+    if _drivers is None:
+        found = []
+        for module, cls, name in _DRIVERS:
+            try:
+                found.append((__import__(module), cls, name))
+            except ImportError:
+                pass
+        _drivers = tuple(found)
+    return _drivers
+
+
+def _detect():
+    """The driver entry of the reader answering right now, or None"""
+    for entry in _load_drivers():
         try:
-            import nfc_ws1850s
-
-            _driver = nfc_ws1850s
-        except ImportError:
-            _driver = False
-    return _driver
+            if entry[0].is_present():
+                return entry
+        except Exception:
+            pass
+    return None
 
 
 def open_reader():
-    """Builds the reader for this board, or raises NFCNotFound"""
-    driver = _load_driver()
-    if not driver:
+    """Builds the reader plugged into this board, or raises NFCNotFound.
+
+    With nothing plugged in the first driver is handed out anyway: its init()
+    is what reports the missing reader.
+    """
+    drivers = _load_drivers()
+    if not drivers:
         raise NFCNotFound("No NFC reader on this board")
-    return driver.WS1850S()
+    module, cls, _ = _detect() or drivers[0]
+    return getattr(module, cls)()
 
 
 def is_supported():
     """True when this build has a reader driver, plugged in or not"""
-    return bool(_load_driver())
+    return bool(_load_drivers())
 
 
 def is_available():
@@ -270,13 +297,13 @@ def is_available():
     The reader is an external module. Unplugged, every NFC entry disappears
     from the menus and nothing in here runs.
     """
-    driver = _load_driver()
-    if not driver:
-        return False
-    try:
-        return bool(driver.is_present())
-    except Exception:
-        return False
+    return _detect() is not None
+
+
+def reader_name():
+    """What the reader answering right now is called, or None"""
+    entry = _detect()
+    return entry[2] if entry else None
 
 
 class Tag:

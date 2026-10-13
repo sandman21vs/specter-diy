@@ -4,10 +4,14 @@ Two models, stacked the way the hardware is:
 
   SimChip   the reader as the driver sees it: an I2C device with the MFRC522
             register set - FIFO, command register, IRQ flags, CRC coprocessor.
+  SimSpiBus the same register set behind the SPI framing of a real MFRC522,
+            with its chip select and its reset pin.
   SimCard   a tag as the reader sees it: ISO14443A frames in, frames out.
             MIFARE Classic 1K or Ultralight/NTAG.
   IsoDepCard  a smartcard: the same selection, then RATS and ISO 14443-4
             blocks carrying APDUs to an applet.
+  SimPN532  another reader: the firmware of a PN532 on I2C, with a SimChip
+            as the radio inside it.
 
 The driver and the tag layer run unmodified against them. The models keep the
 behaviours the real parts punish mistakes with: a halted card ignores REQA, a
@@ -381,3 +385,238 @@ class SimChip:
             self.reg[0x06] = 0x10  # BufferOvfl
         self.reg[0x0C] = rx_bits
         self._irq(0x20)
+
+
+class SimPN532:
+    """A PN532 on I2C: its firmware's command frames in front of a SimChip.
+
+    The radio inside a PN532 (the CIU) is a PN512, with the register map of
+    the MFRC522 moved to 0x63xx, so the SimChip plays that part and this class
+    plays the firmware: frames with their checksums, the ACK, the status byte
+    that says whether there is anything to read, and the handful of commands
+    the driver uses.
+
+    Has the shape of machine.I2C. Anything else asked of it - card, present,
+    field_on, transfers - is the chip's, so a test can hold either.
+    """
+
+    ADDR = 0x24
+    ACK = b"\x00\x00\xff\x00\xff\x00"
+
+    def __init__(self, chip=None, ic=0x32, busy=0):
+        self.chip = SimChip() if chip is None else chip
+        self.ic = ic
+        self.busy = busy  # status reads that say "not yet" before each frame
+        self.waits = 0
+        self.pending = []  # frames waiting to be read, oldest first
+        self.commands = []  # (command, params) as received
+        self.timeout_code = 0x0A
+        self.thru_timeouts = []  # timeout code in force at each frame sent
+        self.parameters = 0x14
+        self.mangle = None  # rewrites a reply frame on its way out
+
+    def __getattr__(self, name):
+        return getattr(self.chip, name)
+
+    # ----- the bus -----
+
+    def _check(self, addr):
+        self.chip.transfers += 1
+        if not self.chip.present or addr != self.ADDR:
+            raise OSError("i2c nack")
+
+    def writeto(self, addr, data):
+        self._check(addr)
+        data = bytes(data)
+        # a new command drops whatever was not read
+        self.pending = []
+        if len(data) < 8 or data[:3] != b"\x00\x00\xff":
+            return
+        length = data[3]
+        if (length + data[4]) & 0xFF or len(data) != length + 7:
+            return
+        body = data[5 : 5 + length]
+        if (sum(body) + data[5 + length]) & 0xFF or body[0] != 0xD4:
+            return
+        self.commands.append((body[1], body[2:]))
+        reply = self._firmware(body[1], body[2:])
+        if reply is None:
+            frame = b"\x00\x00\xff\x01\xff\x7f\x81\x00"
+        else:
+            reply = bytes([0xD5, body[1] + 1]) + bytes(reply)
+            frame = (
+                b"\x00\x00\xff"
+                + bytes([len(reply), (-len(reply)) & 0xFF])
+                + reply
+                + bytes([(-sum(reply)) & 0xFF, 0x00])
+            )
+        if self.mangle is not None:
+            frame = self.mangle(frame)
+        self.pending = [self.ACK, frame]
+        self.waits = self.busy
+
+    def readfrom(self, addr, length):
+        self._check(addr)
+        if not self.pending:
+            return bytes(length)
+        if self.waits:
+            self.waits -= 1
+            return bytes(length)
+        if length == 1:
+            return b"\x01"
+        # A frame is read in one go; what does not fit is lost
+        frame = b"\x01" + self.pending.pop(0)
+        self.waits = self.busy
+        return (frame + bytes(length))[:length]
+
+    # ----- the firmware -----
+
+    @staticmethod
+    def _reg(address):
+        """CIU address to the MFRC522 register number it mirrors"""
+        return ((address & 0xFF) + 0x10) & 0x3F
+
+    def _firmware(self, command, params):
+        chip = self.chip
+        if command == 0x02:  # GetFirmwareVersion
+            return bytes([self.ic, 0x01, 0x06, 0x07])
+        if command == 0x14:  # SAMConfiguration
+            return b""
+        if command == 0x12 and len(params) == 1:  # SetParameters
+            self.parameters = params[0]
+            return b""
+        if command == 0x32 and params:  # RFConfiguration
+            if params[0] == 0x01 and len(params) == 2:
+                tx = chip.reg.get(0x14, 0x80)
+                chip._write(0x14, tx | 0x03 if params[1] & 1 else tx & ~0x03 & 0xFF)
+                # no field, no power: whatever state the card was in is gone
+                if not params[1] & 1 and chip.card:
+                    chip.card.reset()
+            elif params[0] == 0x02 and len(params) == 4:
+                self.timeout_code = params[3]
+            return b""
+        if command == 0x06 and params and len(params) % 2 == 0:  # ReadRegister
+            return bytes(
+                chip._read(self._reg(params[i + 1])) for i in range(0, len(params), 2)
+            )
+        if command == 0x08 and params and len(params) % 3 == 0:  # WriteRegister
+            for i in range(0, len(params), 3):
+                chip._write(self._reg(params[i + 1]), params[i + 2])
+            return b""
+        if command == 0x42 and params:  # InCommunicateThru
+            return self._thru(params)
+        return None
+
+    def _thru(self, frame):
+        chip = self.chip
+        self.thru_timeouts.append(self.timeout_code)
+        tx_bits = chip.reg.get(0x0D, 0) & 0x07
+        if chip.reg.get(0x12, 0) & 0x80:  # TxCRCEn
+            frame += crc_a(frame)
+        reply = None
+        if chip.card is not None and chip.field_on:
+            reply = chip.card.exchange(frame, tx_bits, chip.crypto_on)
+        if reply is None:
+            return b"\x01"  # timeout
+        data, rx_bits = reply
+        if chip.reg.get(0x13, 0) & 0x80:  # RxCRCEn
+            if len(data) < 3 or crc_a(data[:-2]) != data[-2:]:
+                return b"\x02"
+            data = data[:-2]
+        chip.reg[0x0C] = (chip.reg.get(0x0C, 0) & ~0x07) | rx_bits
+        return b"\x00" + bytes(data)
+
+
+class SimPin:
+    """One output pin. Has the shape of machine.Pin in what the driver uses."""
+
+    def __init__(self, level, on_change=None):
+        self.level = level
+        self.on_change = on_change
+
+    def value(self, level=None):
+        if level is None:
+            return self.level
+        level = 1 if level else 0
+        changed, self.level = level != self.level, level
+        if changed and self.on_change:
+            self.on_change(level)
+
+
+class SimSpiBus:
+    """An RC522 module on SPI: a SimChip behind MFRC522 framing.
+
+    Has the shape of the bus the driver opens on the board: spi with
+    write_readinto(), cs and rst. It holds the chip to what the real part
+    does - nothing is heard with the select high or the reset low, the first
+    byte after the select falls is the address, a reset wipes every register
+    and the oscillator takes a while to come back.
+
+    chip.present False is an empty header: MISO floats, and every byte read is
+    `idle`.
+    """
+
+    def __init__(self, chip=None, version=0x92, wake=0, idle=0x00):
+        self.chip = SimChip() if chip is None else chip
+        self.version = version
+        self.wake = wake  # transfers ignored while the oscillator starts
+        self.idle = idle
+        self.spi = self
+        self.cs = SimPin(1, self._select)
+        self.rst = SimPin(0, self._reset)
+        self.asleep = 0
+        self.fresh = False
+        self.resets = 0
+        self.frames = []  # every MOSI frame, as sent
+
+    def _select(self, level):
+        self.fresh = not level
+
+    def _reset(self, level):
+        chip = self.chip
+        if level:
+            self.asleep = self.wake
+            return
+        # NRSTPD low: everything back to the reset state, the antenna with it
+        self.resets += 1
+        chip.reg = {}
+        chip.fifo = bytearray()
+        if chip.card:
+            chip.card.reset()
+
+    def write_readinto(self, tx, rx):
+        chip = self.chip
+        chip.transfers += 1
+        tx = bytes(tx)
+        self.frames.append(tx)
+        if len(rx) != len(tx):
+            raise ValueError("buffers must be the same length")
+        for i in range(len(rx)):
+            rx[i] = self.idle
+        if self.cs.level or not self.fresh:
+            # no select, or a second transfer under the same one: the chip
+            # would take its first byte for data
+            raise AssertionError("SPI transfer outside one chip select")
+        self.fresh = False
+        if not chip.present or not self.rst.level:
+            return
+        if self.asleep:
+            self.asleep -= 1
+            return
+
+        if tx[0] & 0x01:
+            raise AssertionError("address byte with bit 0 set")
+        reg = (tx[0] >> 1) & 0x3F
+        if not tx[0] & 0x80:
+            rx[0] = 0
+            for i, value in enumerate(tx[1:], 1):
+                rx[i] = 0
+                chip._write(reg, value)
+            return
+        # Read: each byte sent addresses the next byte received
+        rx[0] = 0
+        for i in range(1, len(tx)):
+            reg = (tx[i - 1] >> 1) & 0x3F
+            rx[i] = self.version if reg == 0x37 else chip._read(reg)
+        if tx[-1] != 0:
+            raise AssertionError("read not closed with a zero byte")
