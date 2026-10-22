@@ -79,6 +79,11 @@ Trabalho derivado de dois projetos MIT, ambos com revisão própria antes de uso
 Divergências e problemas encontrados nessas fontes estão documentados em
 `reports/` na raiz deste repositório.
 
+Obrigado a quem testou as releases na placa e relatou problemas:
+
+- [@Schnuartz](https://github.com/Schnuartz) — o ícone de bateria que podia
+  ser arrastado pela tela touch, corrigido na alpha.7 (#13)
+
 ## Estado do baseline
 
 Compilação **funcionando**. MicroPython `master` para `ESP32_GENERIC_P4`,
