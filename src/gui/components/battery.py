@@ -18,6 +18,10 @@ class Battery(lv.obj):
         self.set_style_bg_opa(0, 0)
         self.set_style_border_width(0, 0)
         self.set_style_pad_all(0, 0)
+        # LVGL 9 objects scroll by default: keep the icon fixed under touch
+        self.remove_flag(lv.obj.FLAG.SCROLLABLE)
+        self.remove_flag(lv.obj.FLAG.CLICKABLE)
+        self.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
         self.level = lv.label(self)
         self.level.set_recolor(True)
         self.icon = lv.label(self)
@@ -37,9 +41,9 @@ class Battery(lv.obj):
         for v, icon, color in self.LEVELS:
             if self.VALUE >= v:
                 if self.CHARGING:
-                    self.level.set_text("#00D100 "+icon+" #")
+                    self.level.set_text("#00D100 "+icon+"#")
                 else:
-                    self.level.set_text("#"+color+" "+icon+" #")
+                    self.level.set_text("#"+color+" "+icon+"#")
                 break
         self.icon.set_text(lv.SYMBOL.BATTERY_EMPTY)
         if self.CHARGING:
