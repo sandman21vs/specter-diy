@@ -64,6 +64,17 @@ esp_err_t p4camera_release(void);
  */
 esp_err_t p4camera_scan(uint8_t *payload, size_t capacity, size_t *length);
 
+/**
+ * @brief Start a new scan session from a clean state.
+ *
+ * Drops the frames waiting in the driver queue, which were exposed before the
+ * call, and blanks the greyscale and preview buffers. Call it whenever a new
+ * scan starts, so that a code read in an earlier session can neither be
+ * decoded again nor show up in the preview. p4camera_capture() also drops
+ * queued frames by itself after a pause longer than 300 ms.
+ */
+void p4camera_flush(void);
+
 /** Dimensoes do buffer em tons de cinza usado pelo decodificador. */
 void p4camera_gray_size(uint16_t *width, uint16_t *height);
 

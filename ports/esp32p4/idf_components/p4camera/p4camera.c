@@ -32,6 +32,7 @@
 #include "driver/i2c_master.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_video_device.h"
 #include "esp_video_init.h"
 #include "esp_video_ioctl.h"
@@ -45,6 +46,9 @@
  * quadro chega, e como scan() roda no loop do MicroPython isso congela o app
  * inteiro -- spinner parado na tela, sem erro nenhum. */
 #define DQBUF_TIMEOUT_MS 100
+/* A pause between two captures longer than this means the frames waiting in
+ * the driver queue are from before the pause, see drop_queued_frames(). */
+#define STALE_GAP_US     300000
 
 static const char *TAG = "p4camera";
 
@@ -306,6 +310,31 @@ void p4camera_size(uint16_t *width, uint16_t *height) {
     if (height) *height = frame_height;
 }
 
+/* Time of the last capture, for the stale-frame check in p4camera_capture(). */
+static int64_t last_capture_us;
+
+/* Dequeue and requeue every buffer once, so the next capture waits for a
+ * frame exposed from now on.
+ *
+ * The sensor keeps streaming between scans. Nobody dequeues meanwhile, so
+ * the queue fills with frames from the end of the previous scan and the next
+ * capture returns one of them: after scanning one QR code, cancelling and
+ * putting a different code under the camera, the old code was decoded again
+ * and shown in the preview. For a seed import that means importing a seed
+ * that is no longer in front of the camera. */
+static void drop_queued_frames(void) {
+    for (int i = 0; i < BUFFER_COUNT; ++i) {
+        struct v4l2_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        if (ioctl(video_fd, VIDIOC_DQBUF, &buf) != 0) {
+            break;
+        }
+        ioctl(video_fd, VIDIOC_QBUF, &buf);
+    }
+}
+
 esp_err_t p4camera_capture(uint8_t **data, size_t *length) {
     if (video_fd < 0 || !streaming) {
         return ESP_ERR_INVALID_STATE;
@@ -315,6 +344,10 @@ esp_err_t p4camera_capture(uint8_t **data, size_t *length) {
          * streaming. Devolver antes de pegar o proximo. */
         p4camera_release();
     }
+    int64_t now = esp_timer_get_time();
+    if (now - last_capture_us > STALE_GAP_US) {
+        drop_queued_frames();
+    }
     memset(&current, 0, sizeof(current));
     current.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     current.memory = V4L2_MEMORY_MMAP;
@@ -323,6 +356,7 @@ esp_err_t p4camera_capture(uint8_t **data, size_t *length) {
         return (errno == ETIMEDOUT || errno == EPERM) ? ESP_ERR_TIMEOUT : ESP_FAIL;
     }
     holding_frame = true;
+    last_capture_us = esp_timer_get_time();
     if (data) *data = buffers[current.index];
     if (length) *length = current.bytesused;
     return ESP_OK;
@@ -359,6 +393,11 @@ esp_err_t p4camera_preview_enable(uint16_t width, uint16_t height, uint16_t **bu
 
 void p4camera_preview_disable(void) {
     preview_width = preview_height = 0;
+    /* The buffer outlives the screen; blank it so the next scan screen does
+     * not open with the last picture, which may show a seed. */
+    if (preview_buffer) {
+        memset(preview_buffer, 0, preview_capacity * sizeof(uint16_t));
+    }
 }
 
 uint32_t p4camera_preview_frames(void) {
@@ -485,4 +524,20 @@ esp_err_t p4camera_release(void) {
     }
     holding_frame = false;
     return ioctl(video_fd, VIDIOC_QBUF, &current) == 0 ? ESP_OK : ESP_FAIL;
+}
+
+void p4camera_flush(void) {
+    if (holding_frame) {
+        p4camera_release();
+    }
+    if (video_fd >= 0 && streaming) {
+        drop_queued_frames();
+        last_capture_us = esp_timer_get_time();
+    }
+    if (gray_buffer) {
+        memset(gray_buffer, 0, (size_t)gray_width * gray_height);
+    }
+    if (preview_buffer) {
+        memset(preview_buffer, 0, preview_capacity * sizeof(uint16_t));
+    }
 }

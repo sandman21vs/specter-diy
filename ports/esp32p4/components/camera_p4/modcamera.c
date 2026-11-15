@@ -81,10 +81,20 @@ static mp_obj_t camera_release_fn(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_release_obj, camera_release_fn);
 
+/* K_QUIRC_MAX_PAYLOAD e a capacidade maxima de um QR; alocar na pilha
+ * evita mexer no heap do GC a cada quadro do laco de leitura. */
+static uint8_t payload[4096];
+
+/* camera.flush(): new scan session, nothing from the previous one is left
+ * (queued frames, greyscale and preview buffers, last decoded payload). */
+static mp_obj_t camera_flush_fn(void) {
+    p4camera_flush();
+    memset(payload, 0, sizeof(payload));
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(camera_flush_obj, camera_flush_fn);
+
 static mp_obj_t camera_scan_fn(void) {
-    /* K_QUIRC_MAX_PAYLOAD e a capacidade maxima de um QR; alocar na pilha
-     * evita mexer no heap do GC a cada quadro do laco de leitura. */
-    static uint8_t payload[4096];
     size_t length = 0;
     esp_err_t err = p4camera_scan(payload, sizeof(payload), &length);
     if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_TIMEOUT) {
@@ -146,6 +156,7 @@ static const mp_rom_map_elem_t camera_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_capture),  MP_ROM_PTR(&camera_capture_obj) },
     { MP_ROM_QSTR(MP_QSTR_release),  MP_ROM_PTR(&camera_release_obj) },
     { MP_ROM_QSTR(MP_QSTR_scan),     MP_ROM_PTR(&camera_scan_obj) },
+    { MP_ROM_QSTR(MP_QSTR_flush),    MP_ROM_PTR(&camera_flush_obj) },
     { MP_ROM_QSTR(MP_QSTR_gray_size), MP_ROM_PTR(&camera_gray_size_obj) },
     { MP_ROM_QSTR(MP_QSTR_preview),  MP_ROM_PTR(&camera_preview_obj) },
     { MP_ROM_QSTR(MP_QSTR_preview_off), MP_ROM_PTR(&camera_preview_off_obj) },
