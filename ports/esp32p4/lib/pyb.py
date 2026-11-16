@@ -203,6 +203,20 @@ class CameraUART:
             self._pending = payload + self.EOL
         return len(self._pending)
 
+    def flush(self):
+        """Start a new scan session: drop a result that was not read yet and
+        everything the camera still holds from the previous session (queued
+        frames, preview). Otherwise the code of the last session can come back
+        although a different one is under the camera now."""
+        self._pending = b""
+        if self._started:
+            try:
+                import camera
+
+                camera.flush()
+            except Exception:
+                pass
+
     def read(self, nbytes=None):
         if not self._pending:
             return None
