@@ -749,6 +749,8 @@ class QRHost(Host):
         if getattr(self.uart, "is_camera", False):
             # A camera nao tem gatilho nem comando de inicio, e um QR no campo de
             # visao seria lido como a resposta do scanner e descartado.
+            # Frames from the previous session must not be decoded again.
+            self.uart.flush()
             return
         if self.trigger is not None:
             self.trigger.off()
