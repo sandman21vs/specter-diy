@@ -7,6 +7,12 @@ microSD slot. The wallet itself needs no soldering and no extra parts; an
 optional [smartcard hat](#smartcard-hat-optional) adds the Specter smartcard
 keystore.
 
+<p align="center">
+  <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-p4-wifi6-touch-lcd-4.3-1_2.jpg" alt="The Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3, front: the 4.3 inch touchscreen" height="260">
+  <img src="https://www.waveshare.com/media/catalog/product/cache/1/image/800x800/9df78eab33525d08d6e5fb8d27136e95/e/s/esp32-p4-wifi6-touch-lcd-4.3-3.jpg" alt="The Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3, back: the ESP32-P4, the camera connector and the 40-pin header" height="260">
+</p>
+<p align="center"><sub>Photos: <a href="https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm">Waveshare</a>.</sub></p>
+
 > [!WARNING]
 > **Work in progress. Do not use with real funds.** The firmware is built in a
 > development profile: no Secure Boot, no flash encryption, no eFuses burned.
@@ -67,7 +73,11 @@ that works with the **SEC1210 Smartcard Hat** by CryptoGuide:
 
 - Buy it ready-made: **[cryptoguide.tips/shop](https://cryptoguide.tips/shop/)**
 - Design files and build notes:
-  [3rdIteration/seedsigner, `electronics/SmartcardHat`](https://github.com/3rdIteration/seedsigner/tree/main/electronics/SmartcardHat)
+  [3rdIteration/seedsigner, `electronics/SmartcardHat`](https://github.com/3rdIteration/seedsigner/tree/dev/electronics/SmartcardHat)
+
+<p align="center">
+  <img src="docs/pictures/esp32p4/smartcard-hat-v109.jpg" alt="Smartcard Hat V1.0.9, top view: the 40-pin socket, the SEC1210 and the card slot" width="560">
+</p>
 
 The card needs the Specter applet from
 [specter-javacard](https://github.com/cryptoadvance/specter-javacard)
@@ -99,10 +109,28 @@ lines on these pins:
 
 The hat takes 5 V and ground from the header; nothing else needs wiring.
 
+![Smartcard Hat V1.0.9 fitted for the ESP32-P4: R47 and R48 fitted, R44 and R45 left empty, the serial lines on header pins 16 (TXP4, GPIO21) and 15 (RXP4, GPIO28)](docs/pictures/esp32p4/smartcard-hat-v109-esp32p4.jpg)
+
+The board has the GPIO numbers printed next to the header. GPIO28 and GPIO21
+share a column, 28 in the row of odd pins and 21 in the row of even pins:
+
+![The 40-pin header of the Waveshare board, with the GPIO number printed above each pin](https://docs.waveshare.com/assets/images/ESP32-P4-WIFI6-Touch-LCD-4.3-40PIN-silkscreen-b77024b2ec4bfa9577d2559906bfcf5e.webp)
+
+<sub>Photo: [Waveshare wiki](https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3).</sub>
+
 On a hat older than V1.0.9 there are no R47/R48 pads. Lift R44 and R45 and
 solder a wire from each one's chip-side pad: R44 to GPIO21, R45 to GPIO28.
 
-GPIO28 is also the RST of the [RC522 NFC reader](#smartcard-over-nfc-experimental),
+![The two wires on a hat older than V1.0.9: R44 to header pin 16 (GPIO21), R45 to header pin 15 (GPIO28)](docs/pictures/esp32p4/smartcard-hat-rework.jpg)
+
+<sub>Hat images rendered from CryptoGuide's
+[Smartcard Hat design files](https://github.com/3rdIteration/seedsigner/tree/dev/electronics/SmartcardHat)
+(MIT).</sub>
+
+A hat reworked earlier for this port, with RX on GPIO22, needs one change: move
+the R45 wire from header pin 18 to pin 15.
+
+GPIO28 is also the RST of the [RC522 NFC reader](#rfid-rc522-spi),
 so the two do not work together. With the hat on the header, the RC522 driver
 sees its serial line on GPIO28 and leaves the pin alone.
 
@@ -194,6 +222,11 @@ with any reader loads on the others.
 
 All three read the backup cards. They differ in what else they can do, in how
 they are wired, and in how much of this has been tried on the board.
+
+| M5Stack RFID Unit 2 | PN532 module V3 | RFID-RC522 module |
+|:---:|:---:|:---:|
+| <img src="https://static-cdn.m5stack.com/resource/docs/products/unit/rfid2/rfid2_02.webp" alt="M5Stack RFID Unit 2: a white plastic case with a Grove I2C socket" height="180"> | <img src="https://www.elechouse.com/elechouse/images/product/PN532_module_V3/PN532-1.jpg" alt="PN532 NFC module V3: a small red board with its antenna around the edge" height="180"> | <img src="docs/pictures/esp32p4/rc522.jpg" alt="RFID-RC522 module: a blue board with a row of eight pins and its antenna" height="180"> |
+| <sub>Photo: [M5Stack](https://docs.m5stack.com/en/unit/rfid2)</sub> | <sub>Photo: [Elechouse](https://www.elechouse.com/elechouse/images/product/PN532_module_V3/)</sub> | <sub>Photo: JrawX, [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:RFID-RC522.jpg), CC0</sub> |
 
 | | [M5Stack RFID Unit 2](https://docs.m5stack.com/en/unit/rfid2) | PN532 module V3 | RFID-RC522 module |
 |---|---|---|---|
