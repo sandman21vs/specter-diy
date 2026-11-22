@@ -269,6 +269,9 @@ void p4camera_deinit(void) {
         }
         for (int i = 0; i < BUFFER_COUNT; ++i) {
             if (buffers[i]) {
+                /* The last frames may show a seed; the memory goes back to
+                 * the heap, so blank it first. Streaming is off, no DMA. */
+                memset(buffers[i], 0, buffer_lengths[i]);
                 munmap(buffers[i], buffer_lengths[i]);
                 buffers[i] = NULL;
                 buffer_lengths[i] = 0;
@@ -280,6 +283,9 @@ void p4camera_deinit(void) {
     holding_frame = false;
     frame_width = frame_height = 0;
     sensor = P4CAM_SENSOR_NONE;
+    if (gray_buffer) {
+        memset(gray_buffer, 0, (size_t)gray_width * gray_height);
+    }
     free(gray_buffer);
     gray_buffer = NULL;
     gray_width = gray_height = 0;
@@ -393,10 +399,14 @@ esp_err_t p4camera_preview_enable(uint16_t width, uint16_t height, uint16_t **bu
 
 void p4camera_preview_disable(void) {
     preview_width = preview_height = 0;
-    /* The buffer outlives the screen; blank it so the next scan screen does
-     * not open with the last picture, which may show a seed. */
+    /* The scan screen is closing. The preview buffer outlives it, and the
+     * greyscale buffer still holds the last frame handed to the decoder:
+     * both may show a seed, so blank them now instead of at the next scan. */
     if (preview_buffer) {
         memset(preview_buffer, 0, preview_capacity * sizeof(uint16_t));
+    }
+    if (gray_buffer) {
+        memset(gray_buffer, 0, (size_t)gray_width * gray_height);
     }
 }
 
