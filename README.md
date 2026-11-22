@@ -74,28 +74,37 @@ The card needs the Specter applet from
 (MemoryCard). Other cards are detected by the reader, but Specter cannot use
 them.
 
-### The hat needs a small rework
+### Fitting the hat for the ESP32-P4
 
-The hat was designed for a Raspberry Pi. On a Pi header its serial lines are on
-pins 8 and 10, and on this board those pins are **GPIO37 and GPIO38**: the
-console, also used to flash the firmware. Plugged in as it is, the hat would
-fight with the console and the card would see the boot log.
+The hat was designed for a Raspberry Pi, where its serial lines are on pins 8
+and 10. On this board those pins are **GPIO37 and GPIO38**: the console, also
+used to flash the firmware. A hat wired that way would fight with the console
+and the card would see the boot log.
 
-So the two serial lines are moved to GPIO21 and GPIO22. This takes a soldering
-iron and two short wires:
+From **V1.0.9** the hat has a second route for the serial lines, for the
+ESP32-P4. Which one is used depends on two pairs of 100 Ω resistors:
 
-1. **Lift R44 and R45** on the hat. They are the two 100 Ω resistors in series
-   with the serial lines, between the header and the SEC1210 chip. With them
-   lifted, the hat no longer touches GPIO37 and GPIO38.
-2. **Solder a wire from each resistor's chip-side pad to the board**:
+| Resistors | Serial lines go to | Use |
+|---|---|---|
+| R44 / R45 | header pins 8 / 10 | Raspberry Pi (the hat's default) |
+| **R47 / R48** | **header pins 16 / 15** | **this board** |
 
-   | Hat | Signal | Board | Header pin |
-   |---|---|---|---|
-   | R44, chip side | P4 TX → SEC1210 RXD | **GPIO21** | 15 |
-   | R45, chip side | P4 RX ← SEC1210 TXD | **GPIO22** | 17 |
+So on this board: **R47 and R48 fitted, R44 and R45 left off.** That puts the
+lines on these pins:
 
-3. Plug the hat onto the 40-pin header as usual. It takes 5 V and ground from
-   the header; nothing else needs wiring.
+| Hat | Signal | Board | Header pin (Raspberry Pi numbering) | Waveshare numbering |
+|---|---|---|---|---|
+| R47 | P4 TX → SEC1210 RXD | **GPIO21** | 16 | 15 |
+| R48 | P4 RX ← SEC1210 TXD | **GPIO28** | 15 | 16 |
+
+The hat takes 5 V and ground from the header; nothing else needs wiring.
+
+On a hat older than V1.0.9 there are no R47/R48 pads. Lift R44 and R45 and
+solder a wire from each one's chip-side pad: R44 to GPIO21, R45 to GPIO28.
+
+GPIO28 is also the RST of the [RC522 NFC reader](#smartcard-over-nfc-experimental),
+so the two do not work together. With the hat on the header, the RC522 driver
+sees its serial line on GPIO28 and leaves the pin alone.
 
 Insert the card and power the board. Specter picks the smartcard keystore at
 boot when it finds a card with the applet.
@@ -299,7 +308,7 @@ module pin goes straight to a header pin.
 Mind the pin numbers. The table uses the Raspberry Pi numbering of the header.
 Waveshare numbers the same header with the two rows swapped (their pin 1 is
 5 V), and that is the numbering used in the
-[smartcard hat rework](#the-hat-needs-a-small-rework) above. When in doubt, go
+[smartcard hat](#fitting-the-hat-for-the-esp32-p4) table above. When in doubt, go
 by the GPIO name.
 
 The module is a 3.3 V part and has no level shifting: never feed it 5 V. The

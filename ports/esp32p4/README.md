@@ -564,8 +564,18 @@ simulador (`test/tests_native/test_nfc_mfrc522.py`).
 | RST (NRSTPD) | 28 | 15 |
 | IRQ | 49, sem uso | 31 |
 
-A Waveshare numera o conector com as fileiras trocadas; o "pino 15" do rework
-do Smartcard Hat (GPIO21) é da numeração dela, não desta tabela.
+A Waveshare numera o conector com as fileiras trocadas (o pino 1 dela é o 5 V).
+O Smartcard Hat V1.0.9, montado para o ESP32-P4 (R47/R48), usa as posições 16 e
+15 desta tabela, que são 15 e 16 na numeração dela: GPIO21 (TX do P4) e GPIO28
+(RX do P4).
+
+O GPIO28 é ao mesmo tempo o RST do RC522 e o RX do hat, então os dois não
+funcionam juntos. Antes de abrir o SPI o driver do RC522 olha o pino: com a
+serial do `uscard` aberta nele, ou com o pino em alto contra um pull-down (o
+TXD parado do SEC1210), o RC522 dá como ausente e o pino não é tocado. E o
+`uscard` põe o GPIO28 como entrada antes de abrir o UART, para não herdar uma
+saída deixada pelo RC522. **A medir na placa:** que um RC522 sem o hat lê baixo
+nesse teste.
 
 Decisões, e o porquê:
 
@@ -575,16 +585,17 @@ Decisões, e o porquê:
   reset e presença). `init`, `transceive`, `calc_crc`, `authenticate` e os
   prazos são os mesmos, com os mesmos tetos. No arquivo do WS1850S a mudança
   foi tirar de dentro do `init` os dois trechos que eram do barramento.
-- **`machine.SPI`, sem código C.** Nenhum dos seis GPIOs tem outro uso no port
-  (display, touch, SD, câmera, C6, console e o UART do hat ficam em outros), e o
-  SPI2 não tem dono, ao contrário do I²C. É `machine.SPI(1)` com os pinos dados
+- **`machine.SPI`, sem código C.** Fora o GPIO28, que divide com o RX do
+  Smartcard Hat (acima), nenhum dos seis GPIOs tem outro uso no port (display,
+  touch, SD, câmera, C6 e console ficam em outros), e o SPI2 não tem dono, ao contrário do I²C. É `machine.SPI(1)` com os pinos dados
   na mão, modo 0, 1 MHz. O chip select é um `machine.Pin`.
 - **Detecção automática.** `nfc.open_reader()` pergunta pelo WS1850S no I²C,
   que custa um ACK, e só sem resposta pergunta pelo RC522. O SPI não tem ACK,
   então a presença é um eco de registrador depois de tirar o chip do reset:
   poucos ms com o módulo, 50 ms sem nenhum leitor ligado. Efeito colateral: com
   o NFC ligado e sem RFID Unit 2, os GPIOs 28, 29, 31 e 50 passam a ser
-  dirigidos como saída.
+  dirigidos como saída, menos quando o Smartcard Hat está no GPIO28: aí nenhum
+  é tocado.
 - **`deinit` desliga pelo RST** (hard power-down), não por soft power-down. Com
   o NRSTPD em baixo o oscilador e os drivers da antena estão desligados pelo
   próprio chip, sem depender de registrador, e todo `init` parte do estado de

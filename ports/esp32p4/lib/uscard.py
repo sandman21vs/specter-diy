@@ -10,11 +10,16 @@ TPDU). Aqui ficam tres camadas:
   2. os comandos CCID: estado do slot, liga/desliga o cartao, troca de bloco;
   3. o protocolo T=1 do cartao (blocos I/R/S), e T=0 para cartoes antigos.
 
-Ligacao. O hat foi feito para o conector de um Raspberry Pi, onde o UART cai nos
-pinos 8 e 10 -- na Waveshare, GPIO37 e GPIO38, que sao o console e a gravacao de
-firmware. Por isso o hat e usado com os dois sinais desviados para GPIO21 (TX do
-P4, RXD do SEC1210) e GPIO22 (RX do P4, TXD do SEC1210). O hat tira 5 V do
-proprio conector.
+Ligacao. A partir da V1.0.9 o hat tem dois caminhos para a serial do SEC1210.
+Com R44/R45 ela vai aos pinos 8 e 10 do conector, os do Raspberry Pi -- na
+Waveshare, GPIO37 e GPIO38, que sao o console e a gravacao de firmware. Com
+R47/R48, a montagem para o ESP32-P4, ela vai as posicoes 16 e 15 (numeracao do
+Pi; 15 e 16 na da Waveshare): GPIO21 (TX do P4, RXD do SEC1210) e GPIO28 (RX do
+P4, TXD do SEC1210). Esses sao os pinos usados aqui. O hat tira 5 V do proprio
+conector.
+
+O GPIO28 e tambem o RST do RC522 (nfc_mfrc522.py). Os dois nao funcionam
+juntos, e o driver do RC522 nao mexe no pino quando o hat esta nele.
 
 Referencia do protocolo serial: ccid_serial.c do driver CCID de Ludovic
 Rousseau, que suporta este leitor como "SEC1210URT": 115200 baud, 8 bits, dois
@@ -29,10 +34,10 @@ import time
 
 import machine
 
-# Pinos do hat modificado. TX/RX do ponto de vista do P4.
+# Pinos do hat montado para o ESP32-P4 (R47/R48). TX/RX do ponto de vista do P4.
 UART_ID = 1
 TX_PIN = 21
-RX_PIN = 22
+RX_PIN = 28
 
 _SYNC = 0x03
 _CTRL_ACK = 0x06
@@ -131,6 +136,9 @@ class _SEC1210:
 
     def _open(self):
         if self._uart is None:
+            # O UART so liga a entrada do pino; uma saida deixada ligada antes
+            # (o RST do RC522, no mesmo GPIO28) brigaria com o TXD do SEC1210.
+            machine.Pin(RX_PIN, machine.Pin.IN)
             self._uart = machine.UART(
                 UART_ID,
                 baudrate=115200,
@@ -488,6 +496,11 @@ class CardConnection:
 
 
 _sec1210 = None
+
+
+def uart_open():
+    """True depois que a serial do hat foi aberta nos pinos acima"""
+    return _sec1210 is not None and _sec1210._uart is not None
 
 
 class Reader:

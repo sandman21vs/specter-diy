@@ -13,10 +13,17 @@ direto a um pino do conector de 40 pinos, tudo em 3,3 V.
     MISO  GPIO30        3.3V  3V3
     SDA   GPIO50 (SS)   GND   GND
 
-Nenhum desses pinos tem outro uso no port, e o SPI2 nao tem dono, entao aqui
-serve um machine.SPI comum -- ao contrario do I2C, que e do p4board. O chip
+O SPI2 nao tem dono, entao aqui serve um machine.SPI comum -- ao contrario do I2C, que e do p4board. O chip
 select e um GPIO qualquer, dirigido por software. O IRQ fica solto: o leitor e
 consultado, como o WS1850S.
+
+O GPIO28 e dividido com o Smartcard Hat. Na montagem para o ESP32-P4 (R47/R48,
+ver uscard.py) a linha TXD do SEC1210 chega nele. Se o RC522 dirigisse o RST
+ali, as duas saidas brigariam e a serial do hat pararia. Por isso, antes de
+abrir o barramento, o driver olha o pino: com a serial do uscard aberta nele, ou
+com o pino em nivel alto contra um pull-down (o TXD do SEC1210 parado fica em
+alto), o RC522 da como ausente e nao toca em nada. A MEDIR: que um RC522 sem o
+hat le baixo nesse teste.
 
 SPI. Modo 0, MSB primeiro. O primeiro byte de cada transacao e o endereco,
 (reg << 1) & 0x7E, com o bit 7 em 1 para ler. Numa escrita todo byte seguinte
@@ -106,9 +113,35 @@ _board_bus = None
 _active = None
 
 
+def _hat_on_reset_pin():
+    """True quando a serial do Smartcard Hat esta no pino de RST.
+
+    Nunca levanta: sem machine ou sem uscard nao ha hat para proteger.
+    """
+    try:
+        import uscard
+    except Exception:
+        return False
+    try:
+        if uscard.RX_PIN != PIN_RST:
+            return False
+        if uscard.uart_open():
+            return True
+        import machine
+
+        Pin = machine.Pin
+        # O TXD do SEC1210 parado fica em alto e vence o pull-down interno;
+        # o NRSTPD do RC522 e so entrada e deixa o pino cair.
+        return Pin(PIN_RST, Pin.IN, Pin.PULL_DOWN).value() == 1
+    except Exception:
+        return False
+
+
 def _open_bus():
     global _board_bus
     if _board_bus is None:
+        if _hat_on_reset_pin():
+            raise NFCNotFound("GPIO28 is the smartcard hat's serial line")
         _board_bus = _BoardBus()
     return _board_bus
 
@@ -185,6 +218,8 @@ class MFRC522(WS1850S):
         if self.bus is None:
             try:
                 self.bus = _open_bus()
+            except NFCNotFound:
+                raise
             except Exception:
                 # sem machine, ou o SPI2 nao abriu nesses pinos
                 raise NFCNotFound("No SPI bus")
