@@ -88,6 +88,8 @@ void p4camera_gray_size(uint16_t *width, uint16_t *height);
  * reaproveitam o mesmo buffer, entao o tamanho maximo e o da primeira.
  */
 esp_err_t p4camera_preview_enable(uint16_t width, uint16_t height, uint16_t **buffer);
+/** Para a previa e zera os buffers de previa e de tons de cinza, que podem
+ * mostrar uma seed. Chamado quando a tela de leitura fecha. */
 void p4camera_preview_disable(void);
 /** Quantos quadros de previa ja foram gravados; muda a cada quadro novo. */
 uint32_t p4camera_preview_frames(void);

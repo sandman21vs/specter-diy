@@ -81,8 +81,9 @@ static mp_obj_t camera_release_fn(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_release_obj, camera_release_fn);
 
-/* K_QUIRC_MAX_PAYLOAD e a capacidade maxima de um QR; alocar na pilha
- * evita mexer no heap do GC a cada quadro do laco de leitura. */
+/* K_QUIRC_MAX_PAYLOAD e a capacidade maxima de um QR. Estatico, fora do heap
+ * do GC: nao aloca nada a cada quadro do laco de leitura. Guarda o ultimo QR
+ * lido, entao e zerado no flush() e quando a tela de leitura fecha. */
 static uint8_t payload[4096];
 
 /* camera.flush(): new scan session, nothing from the previous one is left
@@ -136,6 +137,7 @@ static MP_DEFINE_CONST_FUN_OBJ_2(camera_preview_obj, camera_preview_fn);
 
 static mp_obj_t camera_preview_off_fn(void) {
     p4camera_preview_disable();
+    memset(payload, 0, sizeof(payload));
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_preview_off_obj, camera_preview_off_fn);
