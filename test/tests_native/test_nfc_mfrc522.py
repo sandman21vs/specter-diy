@@ -316,6 +316,77 @@ class Rc522PresenceTest(unittest.TestCase):
             self.assertFalse(nfc_mfrc522.is_present())
 
 
+class FakePinModule:
+    """A `machine` whose GPIO28 reads a given level; records every pin made"""
+
+    def __init__(self, level):
+        self.level = level
+        self.made = []
+        outer = self
+
+        class Pin:
+            IN, OUT, PULL_DOWN = 1, 3, 2
+
+            def __init__(self, number, mode=None, pull=None, value=None):
+                outer.made.append((number, mode, pull))
+
+            def value(self, *args):
+                return outer.level
+
+        self.Pin = Pin
+
+
+def fake_uscard(rx=28, uart_open=False):
+    module = type(sys)("uscard")
+    module.RX_PIN = rx
+    module.uart_open = lambda: uart_open
+    return module
+
+
+class Rc522SharedResetPinTest(unittest.TestCase):
+    """GPIO28 is the RC522 reset and the smartcard hat's RX"""
+
+    def check(self, uscard, machine):
+        modules = {"uscard": uscard, "machine": machine}
+        with mock.patch.object(nfc_mfrc522, "_board_bus", None), \
+                mock.patch.dict(sys.modules, modules):
+            return nfc_mfrc522._hat_on_reset_pin(), nfc_mfrc522.is_present(), \
+                nfc_mfrc522._board_bus
+
+    def test_hat_serial_open_is_left_alone(self):
+        machine = FakePinModule(level=0)
+        hat, present, bus = self.check(fake_uscard(uart_open=True), machine)
+        self.assertEqual((hat, present, bus), (True, False, None))
+        self.assertEqual(machine.made, [])
+
+    def test_hat_line_high_is_left_alone(self):
+        machine = FakePinModule(level=1)
+        hat, present, bus = self.check(fake_uscard(), machine)
+        self.assertEqual((hat, present, bus), (True, False, None))
+        # only ever looked at as an input
+        self.assertTrue(all(mode == machine.Pin.IN for _, mode, _ in machine.made))
+
+    def test_line_low_is_not_the_hat(self):
+        with mock.patch.dict(sys.modules, {"uscard": fake_uscard(),
+                                           "machine": FakePinModule(level=0)}):
+            self.assertFalse(nfc_mfrc522._hat_on_reset_pin())
+
+    def test_hat_on_other_pins_is_not_looked_at(self):
+        machine = FakePinModule(level=1)
+        with mock.patch.dict(sys.modules, {"uscard": fake_uscard(rx=22), "machine": machine}):
+            self.assertFalse(nfc_mfrc522._hat_on_reset_pin())
+        self.assertEqual(machine.made, [])
+
+    def test_no_uscard(self):
+        with mock.patch.dict(sys.modules, {"uscard": None}):
+            self.assertFalse(nfc_mfrc522._hat_on_reset_pin())
+
+    def test_sim_bus_already_open_is_kept(self):
+        with BoardBus(SimSpiBus(SimChip(SimCard()))), \
+                mock.patch.dict(sys.modules, {"uscard": fake_uscard(uart_open=True)}):
+            self.assertTrue(nfc_mfrc522.is_present())
+
+
 class Rc522SelectionTest(unittest.TestCase):
     """nfc.open_reader(): the I2C reader if it answers, else the SPI one"""
 
