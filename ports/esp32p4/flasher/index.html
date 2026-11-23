@@ -86,7 +86,16 @@
     }
     .tab.active { border-color: var(--accent); color: var(--accent); background: rgba(247,147,26,0.08); }
 
-    .board { font-size: 0.9rem; margin-bottom: 0.25rem; }
+    .board { font-size: 0.9rem; margin-bottom: 0.75rem; }
+
+    .rev-select { margin-bottom: 1rem; }
+    .rev-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.4rem; }
+    .tabs.rev { margin-bottom: 0.5rem; }
+    .tabs.rev .tab { font-size: 0.8rem; padding: 0.4rem; }
+    .rev-status { font-size: 0.85rem; color: var(--muted); line-height: 1.45; }
+    .rev-status.ok   { color: var(--success); }
+    .rev-status.warn { color: var(--warn); }
+    .rev-status.err  { color: var(--error); }
     .release { font-size: 0.85rem; color: var(--muted); }
     .release a { color: var(--accent); }
 
@@ -188,7 +197,7 @@
     <div class="card-title">How to flash</div>
     <ol class="steps">
       <li>Plug the board into its <strong>UART</strong> USB-C port with a data cable.</li>
-      <li>Pick the firmware below (the latest release is selected).</li>
+      <li>Pick the firmware below. The chip revision is detected when you connect; you can also pick it by hand.</li>
       <li>Click <strong>Connect</strong>, choose the board's serial port, then <strong>Flash</strong>.</li>
       <li>The board reboots and shows the Specter screen. If Connect fails, hold <strong>BOOT</strong>, tap <strong>RST</strong>, release <strong>BOOT</strong> and try again.</li>
     </ol>
@@ -203,8 +212,17 @@
     </div>
 
     <div id="releasePanel">
-      <div class="board">Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C (480×800, chip revision v0.x/v1.x)</div>
-      <div class="release" id="releaseInfo">Loading release information…</div>
+      <div class="board">Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3-C (480×800)</div>
+      <div class="rev-select">
+        <div class="rev-label">ESP32-P4 chip revision</div>
+        <div class="tabs rev">
+          <button class="tab active" id="revAuto" onclick="setRev('auto')">🔍 Auto-detect</button>
+          <button class="tab"        id="revPre"  onclick="setRev('pre')">v0.x / v1.x</button>
+          <button class="tab"        id="revV3"   onclick="setRev('v3')">v3.x</button>
+        </div>
+        <div class="rev-status" id="revStatus">Click Connect and the revision is read from the chip.</div>
+      </div>
+      <div class="release" id="releaseInfo"></div>
       <div class="file-list" id="releaseFileList"></div>
     </div>
 
@@ -255,11 +273,23 @@
 <script src="./vendor/jszip-3.10.1.min.js"></script>
 
 <script type="module">
-import { ESPLoader, Transport } from './vendor/esptool-js-0.6.0.js';
+// 0.7.0 is the first esptool-js that powers the flash on ESP32-P4 v3.1/v3.2
+// (ECO6/ECO7). With 0.6.x the stub hangs on those chips and Connect fails with
+// "Serial data stream stopped" (issue #21, odudex/Kern c0e4b03).
+import { ESPLoader, Transport } from './vendor/esptool-js-0.7.0.js';
 
-// The published firmware lives next to this page, in firmware/wave_43/, copied
-// there from the latest GitHub release by tools/publish-flasher.sh.
-const RELEASE_DIR = './firmware/wave_43';
+// The published firmware lives next to this page, copied there from a GitHub
+// release by tools/publish-flasher.sh. ESP-IDF builds an image for either
+// v0.x/v1.x or v3.x silicon, never both, so there is one folder per family.
+// Checking the revision does not depend on what the board runs: it is read
+// from eFuses through the ROM bootloader, factory firmware or not.
+const PROFILES = {
+  pre: { dir: './firmware/wave_43',    label: 'v0.x / v1.x', fits: r => r < 300 },
+  v3:  { dir: './firmware/wave_43_v3', label: 'v3.x',        fits: r => r >= 300 && r < 400 },
+};
+function profileFor(rev) {
+  return Object.keys(PROFILES).find(k => PROFILES[k].fits(rev)) || null;
+}
 
 // Fallback flash layout, only used if a bundle has no flasher_args.json. It is
 // the layout of the Specter-DIY ESP32-P4 port (see the board's partitions.csv).
@@ -289,7 +319,10 @@ function parseFlashFiles(jsonText) {
 const FLASH_MODE = 'dio';
 const FLASH_FREQ = '40m';
 const FLASH_SIZE = '16MB';
-const BAUD       = 460800;
+// Stay at the ROM rate. Changing baud reopens the port, which resets the board
+// into a session without the P4 v3.x flash power-on, and the first write then
+// hangs (odudex/Kern b4796b4).
+const BAUD       = 115200;
 
 let currentMode = 'release';
 let transport   = null;
@@ -363,27 +396,96 @@ function checkChipRev(name, data) {
 }
 
 // ── Published release ────────────────────────────────────────────────────────
-let releaseFiles = null;
+// releases[key] = { meta, files } or null when that family is not published.
+const releases = { pre: null, v3: null };
+let revChoice  = 'auto'; // 'auto' | 'pre' | 'v3'
 
-async function loadRelease() {
-  const info = document.getElementById('releaseInfo');
-  try {
-    const meta = await (await fetch(`${RELEASE_DIR}/release.json`, { cache: 'no-cache' })).json();
-    info.innerHTML = `Release <a href="${meta.url}" target="_blank">${meta.tag}</a>` +
-      (meta.published ? ` · ${meta.published.slice(0, 10)}` : '') +
-      ` · <a href="${RELEASE_DIR}/${meta.zip}" download>download zip</a>`;
-  } catch {
-    info.textContent = 'No published release found.';
-  }
-  try {
-    const r = await fetch(`${RELEASE_DIR}/flasher_args.json`, { cache: 'no-cache' });
-    releaseFiles = r.ok ? (parseFlashFiles(await r.text()) || FLASH_FILES_FALLBACK) : null;
-  } catch { releaseFiles = null; }
-  document.getElementById('releaseFileList').innerHTML = releaseFiles
-    ? releaseFiles.map(f => fileItem(f.name, f.offset)).join('')
-    : '';
+// The profile used for "Latest release": the manual pick, or the detected one.
+function activeProfile() {
+  if (revChoice !== 'auto') return revChoice;
+  return chipRev === null ? null : profileFor(chipRev);
 }
-loadRelease();
+
+async function loadProfile(key) {
+  const dir = PROFILES[key].dir;
+  try {
+    const r = await fetch(`${dir}/flasher_args.json`, { cache: 'no-cache' });
+    if (!r.ok) return null;
+    const files = parseFlashFiles(await r.text()) || FLASH_FILES_FALLBACK;
+    let meta = null;
+    try {
+      const m = await fetch(`${dir}/release.json`, { cache: 'no-cache' });
+      if (m.ok) meta = await m.json();
+    } catch { /* metadata is optional */ }
+    return { meta, files };
+  } catch { return null; }
+}
+
+function setStatus(text, cls = '') {
+  const el = document.getElementById('revStatus');
+  el.className = 'rev-status' + (cls ? ' ' + cls : '');
+  el.textContent = text;
+}
+
+function renderRelease() {
+  for (const [id, key] of [['revAuto', 'auto'], ['revPre', 'pre'], ['revV3', 'v3']]) {
+    document.getElementById(id).classList.toggle('active', revChoice === key);
+  }
+
+  const key  = activeProfile();
+  const info = document.getElementById('releaseInfo');
+  const list = document.getElementById('releaseFileList');
+  info.innerHTML = '';
+  list.innerHTML = '';
+
+  // Status line: what was detected and what will be flashed.
+  const detected = chipRev === null ? null : profileFor(chipRev);
+  if (chipRev !== null && !detected) {
+    setStatus(`Detected chip revision ${fmtRev(chipRev)}, which no build supports.`, 'err');
+  } else if (revChoice === 'auto') {
+    if (chipRev === null) {
+      setStatus('Click Connect and the revision is read from the chip.');
+    } else {
+      setStatus(`Detected chip revision ${fmtRev(chipRev)}: using the ${PROFILES[detected].label} build.`, 'ok');
+    }
+  } else if (chipRev === null) {
+    setStatus(`Using the ${PROFILES[revChoice].label} build (picked by hand). ` +
+              'Connect to check it against the chip.');
+  } else if (detected !== revChoice) {
+    setStatus(`Picked ${PROFILES[revChoice].label}, but the chip is ${fmtRev(chipRev)}. ` +
+              'This build will not boot on it, so flashing will be refused. Pick Auto-detect.', 'err');
+  } else {
+    setStatus(`Using the ${PROFILES[revChoice].label} build; matches the chip (${fmtRev(chipRev)}).`, 'ok');
+  }
+
+  if (!key) return;
+  const rel = releases[key];
+  if (!rel) {
+    info.textContent = `No ${PROFILES[key].label} build is published yet. ` +
+      'Build one yourself and load it under Custom ZIP bundle.';
+    return;
+  }
+  const dir = PROFILES[key].dir;
+  if (rel.meta) {
+    const m = rel.meta;
+    info.innerHTML = `Release <a href="${m.url}" target="_blank">${m.tag}</a>` +
+      (m.published ? ` · ${m.published.slice(0, 10)}` : '') +
+      (m.zip ? ` · <a href="${dir}/${m.zip}" download>download zip</a>` : '');
+  }
+  list.innerHTML = rel.files.map(f => fileItem(f.name, f.offset)).join('');
+}
+
+window.setRev = function (choice) {
+  revChoice = choice;
+  renderRelease();
+};
+
+async function loadReleases() {
+  document.getElementById('releaseInfo').textContent = 'Loading release information…';
+  [releases.pre, releases.v3] = await Promise.all([loadProfile('pre'), loadProfile('v3')]);
+  renderRelease();
+}
+loadReleases();
 
 // ── Custom ZIP ───────────────────────────────────────────────────────────────
 const dropZone = document.getElementById('dropZone');
@@ -465,10 +567,18 @@ async function doConnect() {
     log(`Connected to: ${chip}`, 'l-ok');
     chipRev = esploader.chip.getChipRevision
       ? await esploader.chip.getChipRevision(esploader) : null;
-    if (chipRev !== null && chipRev >= 300) {
-      log(`This board has chip revision ${fmtRev(chipRev)}. ` +
-          'These builds only support revisions v0.x and v1.x.', 'l-err');
+    if (chipRev === null) {
+      log('Could not read the chip revision. Pick it by hand above.', 'l-err');
+    } else {
+      const detected = profileFor(chipRev);
+      log(`Chip revision ${fmtRev(chipRev)}` +
+          (detected ? ` (${PROFILES[detected].label} build)` : ', not supported by any build'),
+          detected ? 'l-ok' : 'l-err');
+      if (detected === 'v3') {
+        log('v3.x builds are development builds, not yet tested on v3.x hardware.', 'l-err');
+      }
     }
+    renderRelease();
 
     connectBtn.textContent = '⏏ Disconnect';
     connectBtn.classList.add('connected');
@@ -490,6 +600,7 @@ async function doDisconnect() {
   transport = null;
   esploader = null;
   chipRev   = null;
+  renderRelease();
   connectBtn.textContent = '🔌 Connect';
   connectBtn.classList.remove('connected');
   updateFlashEnabled();
@@ -516,13 +627,17 @@ window.startFlash = async function () {
     let fileNames;
 
     if (currentMode === 'release') {
-      if (!releaseFiles) throw new Error('No published release is available. Use a custom ZIP.');
-      log('Downloading firmware…');
+      const key = activeProfile();
+      if (!key) throw new Error('Unknown chip revision. Pick it by hand above.');
+      const rel = releases[key];
+      if (!rel) throw new Error(`No ${PROFILES[key].label} build is published. Use a custom ZIP.`);
+      const dir = PROFILES[key].dir;
+      log(`Downloading the ${PROFILES[key].label} firmware…`);
       fileArray = [];
       fileNames = [];
-      for (const ff of releaseFiles) {
+      for (const ff of rel.files) {
         log(`  Fetching ${ff.name}…`);
-        const resp = await fetch(`${RELEASE_DIR}/${ff.name}`, { cache: 'no-cache' });
+        const resp = await fetch(`${dir}/${ff.name}`, { cache: 'no-cache' });
         if (!resp.ok) throw new Error(`Failed to fetch ${ff.name} (HTTP ${resp.status})`);
         const data = new Uint8Array(await resp.arrayBuffer());
         fileArray.push({ data, address: ff.offset });

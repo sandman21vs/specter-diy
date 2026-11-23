@@ -144,6 +144,64 @@ ports/esp32p4/tools/build.sh flash
 `components/esptool_py/esptool.py`, que não existe mais (o esptool virou pacote
 pip, v4.12.0). O `tools/build.sh flash` chama o módulo direto.
 
+### Placas com ESP32-P4 v3.x (em desenvolvimento)
+
+> **Não testado em hardware v3.x.** Compila, mas ainda não tenho uma placa
+> v3.x. Use só para teste, nunca com seed ou fundos reais.
+
+O ESP-IDF gera imagem para v0.x/v1.x **ou** v3.x, nunca as duas
+(`ESP32P4_SELECTS_REV_LESS_V3` fixa o teto em v1.99; sem ele o piso é v3.0).
+Os releases publicados são v0.x/v1.x, então numa placa v3.x o bootloader
+recusa a imagem. Para descobrir a revisão:
+
+```sh
+python -m esptool --chip esp32p4 -p PORTA flash_id   # "Chip is ESP32-P4 (revision v3.1)"
+```
+
+Build e gravação para v3.x:
+
+```sh
+P4_REV3=1 ports/esp32p4/tools/build.sh
+P4_REV3=1 ports/esp32p4/tools/build.sh erase
+P4_REV3=1 ports/esp32p4/tools/build.sh flash
+```
+
+`P4_REV3=1` compila em `build-W43-rev3`, sem `sdkconfig.p4_pre_rev3` e com
+`boards/WAVESHARE_P4_43/sdkconfig.rev3`. O que muda no v3.x, tudo seguindo o
+porte do [odudex/Kern](https://github.com/odudex/Kern), que já roda numa
+wave_43 v3.2:
+
+| Mudança | Por quê | Kern |
+|---|---|---|
+| `REV_MIN_300` | imagem aceita v3.0–v3.99 | `06dc85d` |
+| `phy_clk_src` do DSI em 0 | o `PLL_F20M` legado não existe no v3.x e o `esp_lcd_new_dsi_bus()` aborta; com 0 o IDF escolhe XTAL | `a9d3f7a` |
+| bus timeout do core desligado no boot (`p4board_startup`) | acesso à PSRAM a 200 MHz vira access fault no v3.x | `3ad82dd` |
+| web flasher com esptool-js 0.7.0 e 115200 baud | o 0.6.0 não liga a flash do v3.1/v3.2 e o Connect falha com "Serial data stream stopped" | `c0e4b03`, `b4796b4` |
+
+O `esptool` Python (4.14) já liga a flash do v3.x sozinho, então
+`build.sh flash` funciona direto.
+
+**Web flasher.** A página lê a revisão do eFuse pelo bootloader da ROM ao
+conectar (não depende do firmware que está na placa, de fábrica ou não) e
+escolhe o build: `firmware/wave_43/` para v0.x/v1.x, `firmware/wave_43_v3/`
+para v3.x. Também dá para escolher a família à mão. Em qualquer caso o flash é
+recusado se o cabeçalho da imagem não cobre a revisão do chip.
+
+Para gerar e publicar:
+
+```sh
+ports/esp32p4/tools/build.sh package v0.1.0-alpha.9            # specter-diy-wave_43-....zip
+P4_REV3=1 ports/esp32p4/tools/build.sh package v0.1.0-alpha.9  # specter-diy-wave_43_v3-....zip
+ports/esp32p4/tools/publish-flasher.sh <tag>                   # v3.x da mesma release, se tiver
+ports/esp32p4/tools/publish-flasher.sh <tag> --rev3 <tag-v3>   # v3.x de outra release
+```
+
+Os zips saem em `ports/esp32p4/deps/`. Sem zip v3.x publicado, a página
+avisa e manda usar o "Custom ZIP bundle".
+
+Ainda em aberto no v3.x: a câmera (o CSI usa `PLL_F20M` como fonte do PHY; o
+Kern roda câmera no v3.2, mas sobre ESP-IDF 6.x), o NFC e o smartcard.
+
 ## Fase 2 — display e touch sob MicroPython
 
 Board `WAVESHARE_P4_43` e módulo C `p4board`, **validados no hardware**.
