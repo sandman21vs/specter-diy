@@ -272,7 +272,10 @@ esp_err_t p4board_display_init(void) {
     esp_lcd_dsi_bus_config_t bus_config = {
         .bus_id = 0,
         .num_data_lanes = P4BOARD_LCD_DSI_LANES,
-        .phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
+        /* phy_clk_src fica em 0 de proposito: o esp_lcd escolhe PLL_F20M em
+         * silicio < v3.0 e XTAL em v3.x. MIPI_DSI_PHY_CLK_SRC_DEFAULT e o
+         * PLL_F20M legado, que nao existe na arvore de clock do v3.x e faz o
+         * esp_lcd_new_dsi_bus() abortar (odudex/Kern a9d3f7a). */
         .lane_bit_rate_mbps = P4BOARD_LCD_DSI_LANE_BITRATE_MBPS,
     };
     if ((result = esp_lcd_new_dsi_bus(&bus_config, &dsi_bus)) != ESP_OK) {

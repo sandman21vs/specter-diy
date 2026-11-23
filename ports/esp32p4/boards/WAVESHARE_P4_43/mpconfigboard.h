@@ -6,6 +6,12 @@
 #define MICROPY_HW_BOARD_NAME "Waveshare ESP32-P4 Touch LCD 4.3-C"
 #define MICROPY_HW_MCU_NAME   "ESP32-P4"
 
+// Board startup hook (components/p4board/startup.c). On ESP32-P4 v3.x it turns
+// off the HP core bus timeout before anything touches PSRAM, then runs the
+// port's default boardctrl_startup().
+#define MICROPY_BOARD_STARTUP p4board_startup
+void p4board_startup(void);
+
 // The REPL arrives over the on-board CH343 USB-UART bridge, not native USB.
 #define MICROPY_HW_ENABLE_UART_REPL (1)
 
