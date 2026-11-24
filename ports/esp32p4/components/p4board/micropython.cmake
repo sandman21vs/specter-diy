@@ -8,6 +8,7 @@ target_sources(usermod_p4board INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/touch.c
     ${CMAKE_CURRENT_LIST_DIR}/i2c.c
     ${CMAKE_CURRENT_LIST_DIR}/radio.c
+    ${CMAKE_CURRENT_LIST_DIR}/startup.c
 )
 
 target_include_directories(usermod_p4board INTERFACE

@@ -65,4 +65,8 @@ void p4board_i2c_release(void);
 /* Radio co-processor */
 esp_err_t p4board_radio_off(void);
 
+// MICROPY_BOARD_STARTUP: desliga o bus timeout no v3.x e segue para a partida
+// padrao do port.
+void p4board_startup(void);
+
 #endif  // P4BOARD_H

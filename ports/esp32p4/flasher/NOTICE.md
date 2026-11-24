@@ -14,5 +14,5 @@ Vendored libraries, unmodified, as shipped by Kern:
 
 | File | Project | License |
 |---|---|---|
-| `vendor/esptool-js-0.6.0.js` | [espressif/esptool-js](https://github.com/espressif/esptool-js) 0.6.0 | Apache-2.0, [`vendor/LICENSE-esptool-js`](vendor/LICENSE-esptool-js) |
+| `vendor/esptool-js-0.7.0.js` | [espressif/esptool-js](https://github.com/espressif/esptool-js) 0.7.0 | Apache-2.0, [`vendor/LICENSE-esptool-js`](vendor/LICENSE-esptool-js) |
 | `vendor/jszip-3.10.1.min.js` | [Stuk/jszip](https://github.com/Stuk/jszip) 3.10.1 | MIT or GPLv3 (used under MIT), [`vendor/LICENSE-jszip.md`](vendor/LICENSE-jszip.md) |

@@ -1,0 +1,7 @@
+# ESP32-P4 v3.x, so entra com -DP4_REV3=1 (tools/build.sh com P4_REV3=1).
+#
+# O sdkconfig.p4 do MicroPython ja pede REV_MIN_300; repetimos aqui para o
+# build nao depender disso e deixar explicito que esta imagem nao sobe em
+# v0.x/v1.x. Mesmo overlay do odudex/Kern (sdkconfig.rev3).
+# CONFIG_ESP32P4_SELECTS_REV_LESS_V3 is not set
+CONFIG_ESP32P4_REV_MIN_300=y
