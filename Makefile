@@ -3,7 +3,9 @@ BOARD ?= STM32F469DISC
 FLAVOR ?= SPECTER
 USER_C_MODULES ?= ../../../usermods
 MPY_DIR ?= f469-disco/micropython
-EMBIT_INIT ?= f469-disco/libs/common/embit/src/embit/__init__.py
+# On this branch f469-disco is pinned on its LVGL 9 line, which still vendors
+# embit instead of carrying it as a submodule.
+EMBIT_INIT ?= f469-disco/libs/common/embit/__init__.py
 ifeq ($(shell uname),Linux)
     MPY_CFLAGS ?= -Wno-dangling-pointer -Wno-enum-int-mismatch
 else
@@ -32,7 +34,7 @@ mpy-cross: $(TARGET_DIR) $(MPY_DIR)/mpy-cross/Makefile $(EMBIT_INIT)
 	make -C $(MPY_DIR)/mpy-cross \
         DEBUG=$(DEBUG) \
         CFLAGS_EXTRA="$(MPY_CFLAGS)" && \
-	cp $(MPY_DIR)/mpy-cross/mpy-cross $(TARGET_DIR)
+	cp $(MPY_DIR)/mpy-cross/build/mpy-cross $(TARGET_DIR)
 
 # embed git metadata for firmware builds
 .PHONY: git-info
@@ -43,13 +45,18 @@ git-info:
 disco: $(TARGET_DIR) mpy-cross $(MPY_DIR)/ports/stm32 git-info
 	@echo Building firmware
 	make -C $(MPY_DIR)/ports/stm32 \
-        BOARD=$(BOARD) \
-        FLAVOR=$(FLAVOR) \
-        USE_DBOOT=$(USE_DBOOT) \
-        USER_C_MODULES=$(USER_C_MODULES) \
-        FROZEN_MANIFEST=$(FROZEN_MANIFEST_DISCO) \
-        DEBUG=$(DEBUG) \
-        CFLAGS_EXTRA="$(MPY_CFLAGS)" && \
+		BOARD=$(BOARD) \
+		FLAVOR=$(FLAVOR) \
+		USE_DBOOT=$(USE_DBOOT) \
+		USER_C_MODULES=$(USER_C_MODULES) \
+		FROZEN_MANIFEST=$(FROZEN_MANIFEST_DISCO) \
+		CFLAGS_EXTRA="-DMP_CONFIGFILE=\"<mpconfigport_specter.h>\" $(MPY_CFLAGS)"
+		DEBUG=$(DEBUG) && \
+	arm-none-eabi-objcopy -O binary \
+		$(MPY_DIR)/ports/stm32/build-STM32F469DISC/firmware.elf \
+		$(TARGET_DIR)/specter-diy.bin && \
+	cp $(MPY_DIR)/ports/stm32/build-STM32F469DISC/firmware.hex \
+		$(TARGET_DIR)/specter-diy.hex
 	arm-none-eabi-objcopy -O binary \
         $(MPY_DIR)/ports/stm32/build-STM32F469DISC/firmware.elf \
         $(TARGET_DIR)/specter-diy.bin && \
@@ -80,8 +87,8 @@ unix: $(TARGET_DIR) mpy-cross $(MPY_DIR)/ports/unix git-info
 	make -C $(MPY_DIR)/ports/unix \
         USER_C_MODULES=$(USER_C_MODULES) \
         FROZEN_MANIFEST=$(FROZEN_MANIFEST_UNIX) \
-        CFLAGS_EXTRA="$(MPY_CFLAGS)" && \
-	cp $(MPY_DIR)/ports/unix/micropython $(TARGET_DIR)/micropython_unix
+        CFLAGS_EXTRA="-DMP_CONFIGFILE=\"<mpconfigport_specter.h>\" $(MPY_CFLAGS)" && \
+	cp $(MPY_DIR)/ports/unix/build-standard/micropython $(TARGET_DIR)/micropython_unix
 
 simulate: unix
 	$(TARGET_DIR)/micropython_unix simulate.py
@@ -97,6 +104,7 @@ all: mpy-cross disco unix
 clean:
 	rm -rf $(TARGET_DIR)
 	make -C $(MPY_DIR)/mpy-cross clean
+	rm -rf $(MPY_DIR)/mpy-cross/build
 	make -C $(MPY_DIR)/ports/unix \
 		USER_C_MODULES=$(USER_C_MODULES) \
 		FROZEN_MANIFEST=$(FROZEN_MANIFEST_UNIX) clean

@@ -49,7 +49,13 @@ class SpecterGUI(AsyncGUI):
         Shows progress screen and cancel button
         to cancel communication with the host
         """
-        scr = Progress(title, message, button_text="Cancel")
+        if getattr(getattr(host, "uart", None), "is_camera", False):
+            # Camera-based QR reader: show what the camera sees.
+            from .screens.camera_scan import CameraScanProgress
+
+            scr = CameraScanProgress(title, message, button_text="Cancel")
+        else:
+            scr = Progress(title, message, button_text="Cancel")
         await self.open_popup(scr)
         asyncio.create_task(self.coro(host, scr))
 
@@ -60,9 +66,12 @@ class SpecterGUI(AsyncGUI):
         - or host finishes processing
         Also updates progress screen
         """
+        # Wait for scanning to start (or user cancel)
+        while not host.in_progress and scr.waiting:
+            await asyncio.sleep_ms(10)
+        # Wait for scanning to finish (or user cancel)
         while host.in_progress and scr.waiting:
             await asyncio.sleep_ms(30)
-            scr.tick(5)
             scr.set_progress(host.progress)
         if host.in_progress:
             host.abort()
