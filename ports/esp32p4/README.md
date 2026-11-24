@@ -210,8 +210,10 @@ Verificado numa placa v3.2 (24/11/2026):
 | Touch | GT911 inicializa |
 | Câmera | OV5647 a 37,7 fps em 1280×960, imagem viva (o `PLL_F20M` do CSI funciona no v3.2) |
 | Smartcard | hat SEC1210: ATR T=1, applet MemoryCard, canal seguro aberto em ~0,6 s |
+| NFC | RFID Unit 2 (WS1850S) com anel MIFARE Classic: registro de 61 B gravado e relido em 161 ms; envelope KEF (GCM, 100k iterações) gravado, relido e decifrado, senha errada recusada; PBKDF2 em ~2,6 s |
 
-Ainda em aberto no v3.x: microSD com cartão, leitura de QR e NFC.
+Ainda em aberto no v3.x: microSD com cartão, toque na tela, leitura de QR e
+smartcard por NFC.
 
 **Cabeçalho do bootloader.** O web flasher forçava `40m` e o build v3.x é
 `80m`. Ao trocar o cabeçalho, o esptool-js 0.7.0 recalcula o SHA-256 anexado
