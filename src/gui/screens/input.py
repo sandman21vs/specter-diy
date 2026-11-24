@@ -230,6 +230,13 @@ class PinScreen(Screen):
         if get_word is not None:
             self.words = add_label(get_word(b""), scr=self, style="title")
             self.words.set_style_text_font(lv.font_montserrat_22, 0)
+            # Two lines of words at most, as on the original firmware. There a
+            # word is added for every digit as well, but the keypad buttons are
+            # opaque and cover the label from the third line on, so a long PIN
+            # shows only its first words. The keypad here is transparent, so
+            # the words stop once two lines are full: see _add_word().
+            self._words_max_height = 2 * lv.font_montserrat_22.line_height + self.words.get_style_text_line_space(0)
+            self._words_full = False
             self.words.align_to(self.title, lv.ALIGN.OUT_BOTTOM_MID, 0, 130 if note is not None else 120)
         btnm = ButtonMatrix(self)
         # shuffle numbers to make sure
@@ -293,6 +300,7 @@ class PinScreen(Screen):
         self.pin.set_text("")
         if self.get_word is not None:
             self.words.set_text(self.get_word(b""))
+            self._words_full = False
 
     def cb(self, obj, event):
         if event == lv.EVENT.RELEASED:
@@ -305,9 +313,32 @@ class PinScreen(Screen):
                 self.pin.add_text(c)
                 # add new anti-phishing word
                 if self.get_word is not None:
-                    cur_words = self.words.get_text()
-                    cur_words += " " + self.get_word(self.pin.get_text())
-                    self.words.set_text(cur_words)
+                    self._add_word(self.get_word(self.pin.get_text()))
+
+    def _add_word(self, word):
+        """Appends a word while the label stays within two lines.
+
+        The first word that does not fit stops it until the PIN is cleared, so
+        the words on screen are always the first ones, in order - never a later
+        short word squeezed in after a long one was left out.
+        """
+        if self._words_full:
+            return
+        text = self.words.get_text() + " " + word
+        size = lv.point_t()
+        lv.text_get_size(
+            size,
+            text,
+            lv.font_montserrat_22,
+            self.words.get_style_text_letter_space(0),
+            self.words.get_style_text_line_space(0),
+            self.words.get_content_width(),
+            lv.TEXT_FLAG.NONE,
+        )
+        if size.y > self._words_max_height:
+            self._words_full = True
+            return
+        self.words.set_text(text)
 
     def get_value(self):
         v = self.pin.get_text()
