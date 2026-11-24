@@ -77,7 +77,9 @@ case "${1:-build}" in
     PORT="${2:-$(detect_port)}"
     echo "Flashing via $PORT"
     cd "$BUILD_DIR"
-    esptool write_flash --flash_mode dio --flash_freq 40m --flash_size 16MB \
+    # keep: grava os parametros de flash que o build ja pos no cabecalho do
+    # bootloader (40m no v1.x, 80m no v3.x), sem reescrever a imagem.
+    esptool write_flash --flash_mode keep --flash_freq keep --flash_size keep \
       0x2000   bootloader/bootloader.bin \
       0x8000   partition_table/partition-table.bin \
       0x10000  micropython.bin

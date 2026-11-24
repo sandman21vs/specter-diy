@@ -315,10 +315,15 @@ function parseFlashFiles(jsonText) {
   } catch { return null; }
 }
 
-// Same settings as ports/esp32p4/tools/build.sh flash.
-const FLASH_MODE = 'dio';
-const FLASH_FREQ = '40m';
-const FLASH_SIZE = '16MB';
+// Keep the flash settings the build wrote into the bootloader header. Any
+// change makes esptool-js 0.7.0 patch the header and rewrite the appended
+// SHA-256, and it hashes the wrong bytes: the ROM then reports "SHA-256
+// comparison failed" on every boot. The v3.x build is 80m and the old forced
+// 40m hit exactly that on a v3.2 board; the v1.x build is 40m, so it never
+// showed there.
+const FLASH_MODE = 'keep';
+const FLASH_FREQ = 'keep';
+const FLASH_SIZE = 'keep';
 // Stay at the ROM rate. Changing baud reopens the port, which resets the board
 // into a session without the P4 v3.x flash power-on, and the first write then
 // hangs (odudex/Kern b4796b4).

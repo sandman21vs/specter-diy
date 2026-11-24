@@ -146,8 +146,8 @@ pip, v4.12.0). O `tools/build.sh flash` chama o módulo direto.
 
 ### Placas com ESP32-P4 v3.x (em desenvolvimento)
 
-> **Não testado em hardware v3.x.** Compila, mas ainda não tenho uma placa
-> v3.x. Use só para teste, nunca com seed ou fundos reais.
+> **Em desenvolvimento.** Testado numa placa v3.2 (ECO7), ver abaixo. Use só
+> para teste, nunca com seed ou fundos reais.
 
 O ESP-IDF gera imagem para v0.x/v1.x **ou** v3.x, nunca as duas
 (`ESP32P4_SELECTS_REV_LESS_V3` fixa o teto em v1.99; sem ele o piso é v3.0).
@@ -199,8 +199,25 @@ ports/esp32p4/tools/publish-flasher.sh <tag> --rev3 <tag-v3>   # v3.x de outra r
 Os zips saem em `ports/esp32p4/deps/`. Sem zip v3.x publicado, a página
 avisa e manda usar o "Custom ZIP bundle".
 
-Ainda em aberto no v3.x: a câmera (o CSI usa `PLL_F20M` como fonte do PHY; o
-Kern roda câmera no v3.2, mas sobre ESP-IDF 6.x), o NFC e o smartcard.
+Verificado numa placa v3.2 (24/11/2026):
+
+| Item | Resultado |
+|---|---|
+| Boot | ROM ECO7, bootloader e app sobem; CPU a 400 MHz |
+| Cripto | hashes, TRNG, secp256k1, BIP340 e os 7 vetores BIP84 conferem |
+| PSRAM | 16 MB escritos e conferidos sem erro, sem access fault; cópia de 1 MB em 12 ms |
+| Display | flush de quadro inteiro em ~10 ms |
+| Touch | GT911 inicializa |
+| Câmera | OV5647 a 37,7 fps em 1280×960, imagem viva (o `PLL_F20M` do CSI funciona no v3.2) |
+| Smartcard | hat SEC1210: ATR T=1, applet MemoryCard, canal seguro aberto em ~0,6 s |
+
+Ainda em aberto no v3.x: microSD com cartão, leitura de QR e NFC.
+
+**Cabeçalho do bootloader.** O web flasher forçava `40m` e o build v3.x é
+`80m`. Ao trocar o cabeçalho, o esptool-js 0.7.0 recalcula o SHA-256 anexado
+sobre os bytes errados, e a ROM passa a mostrar `SHA-256 comparison failed`
+em todo boot (sobe mesmo assim, mas com secure boot não subiria). O flasher e o
+`build.sh flash` agora gravam com `keep`, sem tocar no cabeçalho.
 
 ## Fase 2 — display e touch sob MicroPython
 
